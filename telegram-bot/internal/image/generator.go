@@ -3,6 +3,7 @@ package image
 import (
 	"bytes"
 	"fmt"
+	"math"
 	"math/rand"
 	"path/filepath"
 	"strings"
@@ -23,148 +24,171 @@ func NewGenerator(fontDir string) *Generator {
 }
 
 func (g *Generator) GenerateHadithImage(title, narrator, arabicText, englishText, reference string) ([]byte, error) {
-	const W, H = 1080, 1080
-	dc := gg.NewContext(W, H)
-
-	g.drawBackground(dc)
+	const W = 1080
+	// 1. Measure text to determine dynamic height
+	measureDC := gg.NewContext(W, 100)
 
 	arabicFontPath := g.getFontPath("Amiri-Regular.ttf")
 	englishFontPath := g.getFontPath("Caveat-Regular.ttf")
 
-	// --- 1. Title (Top, Green, Uppercase) ---
-	dc.SetHexColor("#558B2F") // Olive Green
-	if err := dc.LoadFontFace(englishFontPath, 110); err != nil {
+	// --- Calculations ---
+
+	// Title Height
+	if err := measureDC.LoadFontFace(englishFontPath, 110); err != nil {
 		return nil, fmt.Errorf("failed to load title font: %w", err)
 	}
-	titleY := 150.0
-	dc.DrawStringAnchored(strings.ToUpper(title), float64(W)/2, titleY, 0.5, 0.5)
+	titleHeight := measureDC.FontHeight()
 
-	// --- 2. Attribution (Black, smaller) ---
-	dc.SetHexColor("#1a1a1a") // Black
-	attributionY := titleY + 80
-
-	// If narrator is empty, use default. If provided, use it.
-	// We want to handle the "Prophet Muhammad ﷺ" part intelligently if present in the narrator string,
-	// but that requires complex parsing.
-	// For now, if the narrator string contains "Prophet" or "Messenger", we just print it as is (using Caveat).
-	// If we want to support the symbol, we'd need to split the string.
-	// Given the constraint "narrator is extracted from JSON", let's print the narrator string.
-
-	// However, the user wants "include all these details in the generated image as shown in the image".
-	// The image shows "The Prophet Muhammad ﷺ said:".
-	// If the JSON `Narrator` field is just "Umar bin Al-Khattab", then the text should probably be:
-	// "Umar bin Al-Khattab narrated that The Prophet Muhammad ﷺ said:"?
-	// Or maybe the `Narrator` field in the JSON *already* contains the full chain?
-	// Let's assume `narrator` is the text to be displayed.
-
-	// We will try to replace "Prophet Muhammad" with "Prophet Muhammad ﷺ" if it doesn't have it,
-	// OR just render the symbol if we can detect the placeholder.
-	// But `Caveat` font doesn't have the symbol. `Amiri` does.
-	// So we need to render the symbol with Amiri.
-
-	// Heuristic: If narrator string is provided, use it.
-	// If it contains "Prophet Muhammad" or "Messenger of Allah", we can try to inject the symbol.
-	// But simply rendering the narrator string using Caveat is the safest first step.
-	// The user said "the narrator is not hardcoded".
-
+	// Attribution Height
 	displayText := narrator
 	if displayText == "" {
 		displayText = "The Prophet Muhammad ﷺ said:"
 	} else {
-		// Ensure it ends with a colon if it looks like an intro
 		if !strings.HasSuffix(displayText, ":") && !strings.HasSuffix(displayText, ".") {
 			displayText += ":"
 		}
 	}
-
-	// Check if we need to inject the symbol (U+FDFA)
-	// If the string contains "Pbuh" or "SAW", replace it?
 	displayText = strings.ReplaceAll(displayText, "(saw)", "ﷺ")
 	displayText = strings.ReplaceAll(displayText, "(pbuh)", "ﷺ")
 
-	// Drawing logic with potential mixed fonts
-	if strings.Contains(displayText, "ﷺ") {
-		parts := strings.Split(displayText, "ﷺ")
+	if err := measureDC.LoadFontFace(englishFontPath, 50); err != nil {
+		return nil, fmt.Errorf("failed to load attribution font: %w", err)
+	}
+	// Simplified measurement: max font height (assuming single line for now, or minimal wrapping)
+	// If the narrator name is extremely long, we might need wrapping, but let's assume single line or minimal.
+	// Actually, let's wrap just in case.
+	maxWidth := float64(W) - 160
+	attributionLines := measureDC.WordWrap(displayText, maxWidth)
+	attributionHeight := float64(len(attributionLines)) * measureDC.FontHeight() * 1.2
 
-		totalWidth := 0.0
-		// Measure width first
+	// Arabic Height
+	if err := measureDC.LoadFontFace(arabicFontPath, 70); err != nil {
+		return nil, fmt.Errorf("failed to load arabic font: %w", err)
+	}
+	shapedArabic := garabic.Shape(arabicText)
+	arabicLines := measureDC.WordWrap(shapedArabic, maxWidth)
+	arabicLineHeight := measureDC.FontHeight() * 1.5
+	arabicTotalHeight := float64(len(arabicLines)) * arabicLineHeight
+
+	// English Height
+	if err := measureDC.LoadFontFace(englishFontPath, 60); err != nil {
+		return nil, fmt.Errorf("failed to load english font: %w", err)
+	}
+	englishLines := measureDC.WordWrap(englishText, maxWidth)
+	englishLineHeight := measureDC.FontHeight() * 1.2
+	englishTotalHeight := float64(len(englishLines)) * englishLineHeight
+
+	// Reference Height
+	if err := measureDC.LoadFontFace(englishFontPath, 40); err != nil {
+		return nil, fmt.Errorf("failed to load ref font: %w", err)
+	}
+	refHeight := measureDC.FontHeight()
+
+	// Padding & Spacing
+	// paddingTop := 150.0 // Unused
+	gap1 := 80.0 // Title to attribution
+	gap2 := 100.0 // Attribution to Arabic
+	gap3 := 80.0 // Arabic to English
+	gap4 := 100.0 // English to Reference
+	paddingBottom := 100.0
+
+	// Total required height calculation
+	// We anchor Title at Y=150. So top used space is roughly 150 + titleHeight/2.
+	// Let's flow from top instead of anchoring.
+
+	currentY := 100.0 // Top margin
+
+	titleY := currentY + titleHeight/2
+	currentY += titleHeight + gap1
+
+	attributionY := currentY + attributionHeight/2
+	currentY += attributionHeight + gap2
+
+	arabicStartY := currentY + arabicTotalHeight/2
+	currentY += arabicTotalHeight + gap3
+
+	englishStartY := currentY + englishTotalHeight/2
+	currentY += englishTotalHeight + gap4
+
+	refY := currentY + refHeight/2
+	currentY += refHeight + paddingBottom
+
+	totalH := int(math.Max(1080, currentY))
+
+	// --- 2. Drawing ---
+	dc := gg.NewContext(W, totalH)
+	g.drawBackground(dc)
+
+	// Draw Title
+	dc.SetHexColor("#558B2F")
+	dc.LoadFontFace(englishFontPath, 110)
+	dc.DrawStringAnchored(strings.ToUpper(title), float64(W)/2, titleY, 0.5, 0.5)
+
+	// Draw Attribution
+	dc.SetHexColor("#1a1a1a")
+	// For simplicity in dynamic layout with mixed fonts, we center the whole block at attributionY.
+	// If it wraps, DrawStringAnchored handles it for single font, but we have mixed font complexity.
+	// Let's simplify mixed font handling: If it contains symbol, render segments.
+	// Limitation: Mixed font + Wrapping is hard.
+	// For now, we assume Attribution fits in one or two lines and center it.
+
+	if strings.Contains(displayText, "ﷺ") {
+		// Centered single line approach for mixed font
+		parts := strings.Split(displayText, "ﷺ")
+		totalW := 0.0
 		for i, part := range parts {
 			dc.LoadFontFace(englishFontPath, 50)
 			w, _ := dc.MeasureString(part)
-			totalWidth += w
+			totalW += w
 			if i < len(parts)-1 {
 				dc.LoadFontFace(arabicFontPath, 50)
 				w, _ = dc.MeasureString("ﷺ")
-				totalWidth += w
+				totalW += w
 			}
 		}
-
-		startX := (float64(W) - totalWidth) / 2
-		currentX := startX
-
+		startX := (float64(W) - totalW) / 2
+		curX := startX
 		for i, part := range parts {
 			dc.LoadFontFace(englishFontPath, 50)
-			dc.DrawStringAnchored(part, currentX, attributionY, 0, 0.5)
+			dc.DrawStringAnchored(part, curX, attributionY, 0, 0.5)
 			w, _ := dc.MeasureString(part)
-			currentX += w
-
+			curX += w
 			if i < len(parts)-1 {
 				dc.LoadFontFace(arabicFontPath, 50)
-				dc.DrawStringAnchored("ﷺ", currentX, attributionY, 0, 0.5)
+				dc.DrawStringAnchored("ﷺ", curX, attributionY, 0, 0.5)
 				w, _ = dc.MeasureString("ﷺ")
-				currentX += w
+				curX += w
 			}
 		}
 	} else {
-		// Just render plain text
-		if err := dc.LoadFontFace(englishFontPath, 50); err != nil {
-			return nil, fmt.Errorf("failed to load attribution font: %w", err)
+		dc.LoadFontFace(englishFontPath, 50)
+		// Handle wrapping if needed
+		for i, line := range attributionLines {
+			offsetY := float64(i)*measureDC.FontHeight()*1.2 - (attributionHeight/2) + (measureDC.FontHeight()*1.2/2)
+			dc.DrawStringAnchored(line, float64(W)/2, attributionY+offsetY, 0.5, 0.5)
 		}
-		dc.DrawStringAnchored(displayText, float64(W)/2, attributionY, 0.5, 0.5)
 	}
 
-	// --- 3. Arabic Text (Centered, Large) ---
-	dc.SetHexColor("#000000") // Black
-	if err := dc.LoadFontFace(arabicFontPath, 70); err != nil {
-		return nil, fmt.Errorf("failed to load arabic font: %w", err)
-	}
-
-	shapedArabic := garabic.Shape(arabicText)
-	maxWidth := float64(W) - 160
-	lines := dc.WordWrap(shapedArabic, maxWidth)
-	lineHeight := dc.FontHeight() * 1.5
-	arabicHeight := float64(len(lines)) * lineHeight
-
-	// Position Arabic below attribution with some gap
-	arabicStartY := attributionY + 100 + (arabicHeight / 2)
-
-	for i, line := range lines {
+	// Draw Arabic
+	dc.SetHexColor("#000000")
+	dc.LoadFontFace(arabicFontPath, 70)
+	for i, line := range arabicLines {
 		reversedLine := g.reversePreservingCombiningMarks(line)
-		dc.DrawStringAnchored(reversedLine, float64(W)/2, arabicStartY+float64(i)*lineHeight - (arabicHeight/2), 0.5, 0.5)
+		offsetY := float64(i)*arabicLineHeight - (arabicTotalHeight/2) + (arabicLineHeight/2)
+		dc.DrawStringAnchored(reversedLine, float64(W)/2, arabicStartY+offsetY, 0.5, 0.5)
 	}
 
-	// --- 4. English Translation (Centered, Caveat) ---
+	// Draw English
 	dc.SetHexColor("#1a1a1a")
-	if err := dc.LoadFontFace(englishFontPath, 60); err != nil {
-		return nil, fmt.Errorf("failed to load english font: %w", err)
-	}
-
-	englishLines := dc.WordWrap(englishText, maxWidth)
-	englishHeight := float64(len(englishLines)) * (dc.FontHeight() * 1.2)
-
-	// Position English below Arabic with gap
-	englishStartY := arabicStartY + (arabicHeight/2) + 80 + (englishHeight/2)
-
+	dc.LoadFontFace(englishFontPath, 60)
 	for i, line := range englishLines {
-		dc.DrawStringAnchored(line, float64(W)/2, englishStartY+float64(i)*(dc.FontHeight()*1.2) - (englishHeight/2), 0.5, 0.5)
+		offsetY := float64(i)*englishLineHeight - (englishTotalHeight/2) + (englishLineHeight/2)
+		dc.DrawStringAnchored(line, float64(W)/2, englishStartY+offsetY, 0.5, 0.5)
 	}
 
-	// --- 5. Reference (Bottom, Smaller) ---
-	dc.SetHexColor("#4a4a4a") // Dark Gray
-	if err := dc.LoadFontFace(englishFontPath, 40); err != nil {
-		return nil, fmt.Errorf("failed to load ref font: %w", err)
-	}
-	refY := float64(H) - 100
+	// Draw Reference
+	dc.SetHexColor("#4a4a4a")
+	dc.LoadFontFace(englishFontPath, 40)
 	dc.DrawStringAnchored(reference, float64(W)/2, refY, 0.5, 0.5)
 
 	var buf bytes.Buffer
@@ -176,27 +200,29 @@ func (g *Generator) GenerateHadithImage(title, narrator, arabicText, englishText
 }
 
 func (g *Generator) drawBackground(dc *gg.Context) {
-	// Light blue/white tint similar to reference image
+	// Light blue/white tint
 	dc.SetHexColor("#F0F8FF")
 	dc.Clear()
 
-	// Add subtle noise/texture
 	rnd := rand.New(rand.NewSource(time.Now().UnixNano()))
 	width := dc.Width()
 	height := dc.Height()
 
 	// Faint blobs
-	for i := 0; i < 5; i++ {
+	// Scale number of blobs by height ratio
+	numBlobs := int(5 * (float64(height) / 1080.0))
+	if numBlobs < 5 { numBlobs = 5 }
+
+	for i := 0; i < numBlobs; i++ {
 		x := rnd.Float64() * float64(width)
 		y := rnd.Float64() * float64(height)
 		r := 100 + rnd.Float64()*200
 
-		// Very light pink/orange/blue pastel blobs
 		rCol := 200 + rnd.Intn(55)
 		gCol := 200 + rnd.Intn(55)
 		bCol := 200 + rnd.Intn(55)
 
-		dc.SetRGBA255(rCol, gCol, bCol, 20) // Very transparent
+		dc.SetRGBA255(rCol, gCol, bCol, 20)
 		dc.DrawCircle(x, y, r)
 		dc.Fill()
 	}

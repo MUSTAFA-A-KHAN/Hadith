@@ -629,17 +629,26 @@ func (h *Handler) handleHadithImageCallback(c *tgbotapi.CallbackQuery, parts []s
 	col := parts[1]
 	hadithNum, _ := strconv.Atoi(parts[2])
 
+	// Determine where to send the image
+	var chatID int64
+	if c.Message != nil {
+		chatID = c.Message.Chat.ID
+	} else {
+		// Inline button: try sending to user's private chat
+		chatID = c.From.ID
+	}
+
 	// Answer callback to show loading state (toast or just stop loading)
 	h.bot.Request(tgbotapi.NewCallback(c.ID, "🎨 Generating image..."))
 
 	// Fetch hadith
 	hadith, _ := h.hadithService.FindHadithByNumber(col, hadithNum)
 	if hadith == nil {
-		h.sendMessage(c.Message.Chat.ID, "⚠️ Could not find hadith.")
+		h.sendMessage(chatID, "⚠️ Could not find hadith.")
 		return
 	}
 
-	h.bot.Send(tgbotapi.NewChatAction(c.Message.Chat.ID, "upload_photo"))
+	h.bot.Send(tgbotapi.NewChatAction(chatID, "upload_photo"))
 
 	// Generate image
 	book := h.hadithService.GetBook(col, hadith.ChapterID)
@@ -657,12 +666,12 @@ func (h *Handler) handleHadithImageCallback(c *tgbotapi.CallbackQuery, parts []s
 	imgBytes, err := h.imageGenerator.GenerateHadithImage(title, hadith.Narrator, hadith.Arabic, hadith.English, ref)
 	if err != nil {
 		h.log.Error("Failed to generate image: %v", err)
-		h.sendMessage(c.Message.Chat.ID, "⚠️ Failed to generate image.")
+		h.sendMessage(chatID, "⚠️ Failed to generate image.")
 		return
 	}
 
 	// Send photo
-	photo := tgbotapi.NewPhoto(c.Message.Chat.ID, tgbotapi.FileBytes{
+	photo := tgbotapi.NewPhoto(chatID, tgbotapi.FileBytes{
 		Name:  "hadith.png",
 		Bytes: imgBytes,
 	})
