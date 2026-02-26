@@ -224,7 +224,43 @@ func (g *Generator) GenerateHadithImage(title, narrator, arabicText, englishText
 	dc.LoadFontFace(englishFontPath, 60)
 	for i, line := range englishLines {
 		offsetY := float64(i)*englishLineHeight - (englishTotalHeight/2) + (englishLineHeight/2)
-		dc.DrawStringAnchored(line, float64(W)/2, englishStartY+offsetY, 0.5, 0.5)
+		lineY := englishStartY + offsetY
+
+		if strings.Contains(line, "ﷺ") {
+			parts := strings.Split(line, "ﷺ")
+			totalW := 0.0
+
+			// Measure total width first
+			for i, part := range parts {
+				dc.LoadFontFace(englishFontPath, 60)
+				w, _ := dc.MeasureString(part)
+				totalW += w
+				if i < len(parts)-1 {
+					dc.LoadFontFace(arabicFontPath, 60)
+					w, _ = dc.MeasureString("ﷺ")
+					totalW += w
+				}
+			}
+
+			startX := (float64(W) - totalW) / 2
+			curX := startX
+
+			for i, part := range parts {
+				dc.LoadFontFace(englishFontPath, 60)
+				dc.DrawStringAnchored(part, curX, lineY, 0, 0.5)
+				w, _ := dc.MeasureString(part)
+				curX += w
+				if i < len(parts)-1 {
+					dc.LoadFontFace(arabicFontPath, 60)
+					dc.DrawStringAnchored("ﷺ", curX, lineY, 0, 0.5)
+					w, _ = dc.MeasureString("ﷺ")
+					curX += w
+				}
+			}
+		} else {
+			dc.LoadFontFace(englishFontPath, 60)
+			dc.DrawStringAnchored(line, float64(W)/2, lineY, 0.5, 0.5)
+		}
 	}
 
 	// Draw Reference
