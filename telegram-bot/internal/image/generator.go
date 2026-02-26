@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math/rand"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/abdullahdiaa/garabic"
@@ -21,62 +22,98 @@ func NewGenerator(fontDir string) *Generator {
 	}
 }
 
-func (g *Generator) GenerateHadithImage(arabicText, englishText string) ([]byte, error) {
+func (g *Generator) GenerateHadithImage(title, arabicText, englishText, reference string) ([]byte, error) {
 	const W, H = 1080, 1080
 	dc := gg.NewContext(W, H)
 
 	g.drawBackground(dc)
 
-	// Arabic Text
 	arabicFontPath := g.getFontPath("Amiri-Regular.ttf")
-	// Load font with size 60
-	if err := dc.LoadFontFace(arabicFontPath, 60); err != nil {
+	englishFontPath := g.getFontPath("Caveat-Regular.ttf")
+
+	// --- 1. Title (Top, Green, Uppercase) ---
+	dc.SetHexColor("#558B2F") // Olive Green
+	if err := dc.LoadFontFace(englishFontPath, 110); err != nil {
+		return nil, fmt.Errorf("failed to load title font: %w", err)
+	}
+	titleY := 150.0
+	dc.DrawStringAnchored(strings.ToUpper(title), float64(W)/2, titleY, 0.5, 0.5)
+
+	// --- 2. Attribution (Black, smaller) ---
+	dc.SetHexColor("#1a1a1a") // Black
+	attributionY := titleY + 80
+
+	// We need to render "ﷺ" (U+FDFA) with Amiri, and the rest with Caveat.
+	// Simple approach: split string and measure widths.
+	parts := []struct {
+		text string
+		font string
+		size float64
+	}{
+		{"The Prophet Muhammad ", englishFontPath, 50},
+		{"ﷺ", arabicFontPath, 50}, // U+FDFA
+		{" said:", englishFontPath, 50},
+	}
+
+	totalWidth := 0.0
+	for _, p := range parts {
+		dc.LoadFontFace(p.font, p.size)
+		w, _ := dc.MeasureString(p.text)
+		totalWidth += w
+	}
+
+	startX := (float64(W) - totalWidth) / 2
+	currentX := startX
+	for _, p := range parts {
+		dc.LoadFontFace(p.font, p.size)
+		dc.DrawStringAnchored(p.text, currentX, attributionY, 0, 0.5)
+		w, _ := dc.MeasureString(p.text)
+		currentX += w
+	}
+
+	// --- 3. Arabic Text (Centered, Large) ---
+	dc.SetHexColor("#000000") // Black
+	if err := dc.LoadFontFace(arabicFontPath, 70); err != nil {
 		return nil, fmt.Errorf("failed to load arabic font: %w", err)
 	}
 
-	dc.SetHexColor("#1a1a1a") // Dark charcoal
-
-	// Shape Arabic text
 	shapedArabic := garabic.Shape(arabicText)
-
-	// Wrap text
-	maxWidth := float64(W) - 160 // 80px padding on each side
+	maxWidth := float64(W) - 160
 	lines := dc.WordWrap(shapedArabic, maxWidth)
-
-	// Calculate vertical positioning
 	lineHeight := dc.FontHeight() * 1.5
 	arabicHeight := float64(len(lines)) * lineHeight
 
-	// We want to center everything.
-	// Let's reserve top 50% for Arabic, bottom 50% for English?
-	// Or just flow them with a gap.
-
-	// Let's try to center the whole block?
-	// Or put Arabic at visual center of top half.
-
-	arabicStartY := (float64(H)/2 - arabicHeight) / 2 + 60
+	// Position Arabic below attribution with some gap
+	arabicStartY := attributionY + 100 + (arabicHeight / 2)
 
 	for i, line := range lines {
-		// Reverse line for RTL rendering in LTR engine
 		reversedLine := g.reversePreservingCombiningMarks(line)
-		dc.DrawStringAnchored(reversedLine, float64(W)/2, arabicStartY+float64(i)*lineHeight, 0.5, 0.5)
+		dc.DrawStringAnchored(reversedLine, float64(W)/2, arabicStartY+float64(i)*lineHeight - (arabicHeight/2), 0.5, 0.5)
 	}
 
-	// English Text
-	englishFontPath := g.getFontPath("Caveat-Regular.ttf")
-	if err := dc.LoadFontFace(englishFontPath, 50); err != nil {
+	// --- 4. English Translation (Centered, Caveat) ---
+	dc.SetHexColor("#1a1a1a")
+	if err := dc.LoadFontFace(englishFontPath, 60); err != nil {
 		return nil, fmt.Errorf("failed to load english font: %w", err)
 	}
 
 	englishLines := dc.WordWrap(englishText, maxWidth)
-	englishHeight := float64(len(englishLines)) * lineHeight
+	englishHeight := float64(len(englishLines)) * (dc.FontHeight() * 1.2)
 
-	// Center english in bottom half
-	englishStartY := float64(H)/2 + (float64(H)/2-englishHeight)/2
+	// Position English below Arabic with gap
+	englishStartY := arabicStartY + (arabicHeight/2) + 80 + (englishHeight/2)
 
 	for i, line := range englishLines {
-		dc.DrawStringAnchored(line, float64(W)/2, englishStartY+float64(i)*lineHeight, 0.5, 0.5)
+		dc.DrawStringAnchored(line, float64(W)/2, englishStartY+float64(i)*(dc.FontHeight()*1.2) - (englishHeight/2), 0.5, 0.5)
 	}
+
+	// --- 5. Reference (Bottom, Smaller) ---
+	dc.SetHexColor("#4a4a4a") // Dark Gray
+	if err := dc.LoadFontFace(englishFontPath, 40); err != nil {
+		return nil, fmt.Errorf("failed to load ref font: %w", err)
+	}
+	refY := float64(H) - 100
+	dc.DrawStringAnchored(reference, float64(W)/2, refY, 0.5, 0.5)
 
 	var buf bytes.Buffer
 	if err := dc.EncodePNG(&buf); err != nil {
@@ -87,27 +124,34 @@ func (g *Generator) GenerateHadithImage(arabicText, englishText string) ([]byte,
 }
 
 func (g *Generator) drawBackground(dc *gg.Context) {
-	// Fill background with off-white/beige
-	// #FAF8F5
-	dc.SetHexColor("#FAF8F5")
+	// Light blue/white tint similar to reference image
+	// #E3F2FD (Light Blue 50) or #F1F8E9 (Light Green 50)?
+	// Let's go with very light blue/white: #F0F8FF (AliceBlue)
+	dc.SetHexColor("#F0F8FF")
 	dc.Clear()
 
-	// Add noise
+	// Add subtle noise/texture
 	rnd := rand.New(rand.NewSource(time.Now().UnixNano()))
 	width := dc.Width()
 	height := dc.Height()
 
-	noiseCount := (width * height) / 10 // Density
-	for i := 0; i < noiseCount; i++ {
+	// Floral-ish abstract blobs? Too complex. Just noise for now.
+	// Maybe draw some very faint large circles/blobs in background for "texture"?
+
+	// Faint blobs
+	for i := 0; i < 5; i++ {
 		x := rnd.Float64() * float64(width)
 		y := rnd.Float64() * float64(height)
+		r := 100 + rnd.Float64()*200
 
-		// Random gray/brown color
-		gray := uint8(200 + rnd.Intn(55)) // Light noise
-		alpha := uint8(10 + rnd.Intn(20)) // Low alpha
+		// Very light pink/orange/blue pastel blobs
+		rCol := 200 + rnd.Intn(55)
+		gCol := 200 + rnd.Intn(55)
+		bCol := 200 + rnd.Intn(55)
 
-		dc.SetRGBA255(int(gray), int(gray), int(gray), int(alpha))
-		dc.SetPixel(int(x), int(y))
+		dc.SetRGBA255(rCol, gCol, bCol, 20) // Very transparent
+		dc.DrawCircle(x, y, r)
+		dc.Fill()
 	}
 }
 
@@ -121,14 +165,6 @@ func (g *Generator) reversePreservingCombiningMarks(s string) string {
 
 	for i := 0; i < len(runes); i++ {
 		r := runes[i]
-		// Check if r is a combining mark (Basic Arabic Range)
-		// 064B-065F: Tashkeel
-		// 0670: Superscript Alef
-		// 0610-061A: Honorifics etc
-		// 06D6-06DC: Quranic marks
-		// 06DF-06E4: More marks
-		// 06E7-06E8: More
-		// 06EA-06ED: More
 		if isCombiningMark(r) && len(clusters) > 0 {
 			clusters[len(clusters)-1] = append(clusters[len(clusters)-1], r)
 		} else {
@@ -136,12 +172,10 @@ func (g *Generator) reversePreservingCombiningMarks(s string) string {
 		}
 	}
 
-	// Reverse clusters
 	for i, j := 0, len(clusters)-1; i < j; i, j = i+1, j-1 {
 		clusters[i], clusters[j] = clusters[j], clusters[i]
 	}
 
-	// Flatten
 	var res []rune
 	for _, cluster := range clusters {
 		res = append(res, cluster...)
@@ -150,8 +184,8 @@ func (g *Generator) reversePreservingCombiningMarks(s string) string {
 }
 
 func isCombiningMark(r rune) bool {
-	return (r >= 0x064B && r <= 0x065F) || // Fathatan, Dammatan, Kasratan, Fatha, Damma, Kasra, Shadda, Sukun
-		r == 0x0670 || // Superscript Alef
+	return (r >= 0x064B && r <= 0x065F) ||
+		r == 0x0670 ||
 		(r >= 0x0610 && r <= 0x061A) ||
 		(r >= 0x06D6 && r <= 0x06DC) ||
 		(r >= 0x06DF && r <= 0x06E4) ||
