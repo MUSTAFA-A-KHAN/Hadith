@@ -268,6 +268,11 @@ func (g *Generator) GenerateHadithImage(title, narrator, arabicText, englishText
 	dc.LoadFontFace(englishFontPath, 40)
 	dc.DrawStringAnchored(reference, float64(W)/2, refY, 0.5, 0.5)
 
+	// Draw Bismillah Header (Decorative)
+	dc.LoadFontFace(arabicFontPath, 40)
+	dc.SetHexColor("#556B2F") // Olive
+	dc.DrawStringAnchored("بسم الله الرحمن الرحيم", float64(W)/2, 65, 0.5, 0.5)
+
 	var buf bytes.Buffer
 	if err := dc.EncodePNG(&buf); err != nil {
 		return nil, fmt.Errorf("failed to encode png: %w", err)
@@ -277,31 +282,97 @@ func (g *Generator) GenerateHadithImage(title, narrator, arabicText, englishText
 }
 
 func (g *Generator) drawBackground(dc *gg.Context) {
-	// Light blue/white tint
-	dc.SetHexColor("#F0F8FF")
+	width := float64(dc.Width())
+	height := float64(dc.Height())
+
+	// 1. Soft Warm Beige Background
+	dc.SetHexColor("#FDFCF5") // Very light cream/warm paper
 	dc.Clear()
 
+	// 2. Subtle Texture (Noise/Speckles)
 	rnd := rand.New(rand.NewSource(time.Now().UnixNano()))
-	width := dc.Width()
-	height := dc.Height()
-
-	// Faint blobs
-	numBlobs := int(5 * (float64(height) / 1080.0))
-	if numBlobs < 5 { numBlobs = 5 }
-
-	for i := 0; i < numBlobs; i++ {
-		x := rnd.Float64() * float64(width)
-		y := rnd.Float64() * float64(height)
-		r := 100 + rnd.Float64()*200
-
-		rCol := 200 + rnd.Intn(55)
-		gCol := 200 + rnd.Intn(55)
-		bCol := 200 + rnd.Intn(55)
-
-		dc.SetRGBA255(rCol, gCol, bCol, 20)
+	for i := 0; i < 5000; i++ {
+		x := rnd.Float64() * width
+		y := rnd.Float64() * height
+		r := 0.5 + rnd.Float64()*1.5
+		alpha := 10 + rnd.Intn(20)
+		dc.SetRGBA255(210, 205, 190, alpha) // darker beige speckles
 		dc.DrawCircle(x, y, r)
 		dc.Fill()
 	}
+
+	// 3. Islamic Geometric Pattern (Simplified Star/Rosette Motif) - Faint overlay
+	dc.SetRGBA255(180, 190, 160, 15) // Sage green tint, very transparent
+	patternSize := 150.0
+	for x := 0.0; x < width; x += patternSize {
+		for y := 0.0; y < height; y += patternSize {
+			drawStarMotif(dc, x+patternSize/2, y+patternSize/2, patternSize*0.4)
+		}
+	}
+
+	// 4. Elegant Border
+	margin := 30.0
+	dc.SetLineWidth(3)
+	dc.SetHexColor("#8FBC8F") // Dark Sea Green
+	dc.DrawRectangle(margin, margin, width-2*margin, height-2*margin)
+	dc.Stroke()
+
+	// Inner thin gold border
+	margin2 := 38.0
+	dc.SetLineWidth(1)
+	dc.SetHexColor("#D4AF37") // Gold
+	dc.DrawRectangle(margin2, margin2, width-2*margin2, height-2*margin2)
+	dc.Stroke()
+
+	// Corner Accents (Floral/Geometric)
+	drawCorner(dc, margin, margin, 1)            // Top-Left
+	drawCorner(dc, width-margin, margin, 2)      // Top-Right
+	drawCorner(dc, width-margin, height-margin, 3) // Bottom-Right
+	drawCorner(dc, margin, height-margin, 4)     // Bottom-Left
+}
+
+func drawStarMotif(dc *gg.Context, cx, cy, r float64) {
+	dc.Push()
+	dc.Translate(cx, cy)
+	for i := 0; i < 8; i++ {
+		dc.Rotate(gg.Radians(45))
+		dc.DrawEllipse(0, r/2, r/6, r/2)
+	}
+	dc.Fill()
+	dc.Pop()
+}
+
+func drawCorner(dc *gg.Context, x, y float64, corner int) {
+	size := 80.0
+	dc.Push()
+	dc.Translate(x, y)
+
+	// Rotate based on corner to face inward
+	switch corner {
+	case 1: // TL
+		// No rotation
+	case 2: // TR
+		dc.Rotate(gg.Radians(90))
+	case 3: // BR
+		dc.Rotate(gg.Radians(180))
+	case 4: // BL
+		dc.Rotate(gg.Radians(270))
+	}
+
+	// Draw decorative vine/leaf
+	dc.SetHexColor("#556B2F") // Dark Olive Green
+	dc.MoveTo(0, 0)
+	dc.QuadraticTo(size/2, 0, size, size)
+	dc.Stroke()
+
+	// Leaf
+	dc.SetRGBA255(107, 142, 35, 100) // Olive Drab
+	dc.DrawCircle(size/3, size/3, 5)
+	dc.Fill()
+	dc.DrawCircle(size/1.5, size/1.5, 3)
+	dc.Fill()
+
+	dc.Pop()
 }
 
 func (g *Generator) getFontPath(fontName string) string {
