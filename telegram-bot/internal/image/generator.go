@@ -271,7 +271,7 @@ func (g *Generator) GenerateHadithImage(title, narrator, arabicText, englishText
 	// Draw Bismillah Header (Decorative)
 	dc.LoadFontFace(arabicFontPath, 40)
 	dc.SetHexColor("#556B2F") // Olive
-	dc.DrawStringAnchored("بسم الله الرحمن الرحيم", float64(W)/2, 65, 0.5, 0.5)
+	dc.DrawStringAnchored(garabic.Shape("بسم الله الرحمن الرحيم"), float64(W)/2, 65, 0.5, 0.5)
 
 	var buf bytes.Buffer
 	if err := dc.EncodePNG(&buf); err != nil {
