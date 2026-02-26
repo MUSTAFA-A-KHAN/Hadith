@@ -73,11 +73,22 @@ func (h *Handler) handleIncomingMessage(m *tgbotapi.Message) {
 // --- COMMAND HANDLERS ---
 
 func (h *Handler) handleStart(m *tgbotapi.Message) {
-	text := `🕌 *Welcome to Hadith Portal Bot*
+	args := m.CommandArguments()
+	if strings.HasPrefix(args, "hadith_") {
+		parts := strings.Split(args, "_")
+		if len(parts) >= 3 {
+			col := parts[1]
+			hadithNum, _ := strconv.Atoi(parts[2])
+			h.sendSearchHadithPaged(m.Chat.ID, 0, "", col, hadithNum, 0)
+			return
+		}
+	}
+
+	text := `🕌 <b>Welcome to Hadith Portal Bot</b>
 
 Explore authentic hadith from major collections with a clean, simple menu.
 
-✨ *Quick actions:* use the buttons below to browse, search, or get a random hadith.`
+✨ <b>Quick actions:</b> use the buttons below to browse, search, or get a random hadith.`
 
 	kb := tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
@@ -93,18 +104,18 @@ Explore authentic hadith from major collections with a clean, simple menu.
 }
 
 func (h *Handler) handleHelp(m *tgbotapi.Message) {
-	helpText := `❓ *Hadith Portal Bot — Help*
+	helpText := `❓ <b>Hadith Portal Bot — Help</b>
 
-*Commands*
-• */start* — Open the main menu
-• */collections* — Browse hadith collections
-• */search <keyword>* — Search hadith text
-• */random* — Get a random hadith
-• */help* — Show this help message
+<b>Commands</b>
+• <b>/start</b> — Open the main menu
+• <b>/collections</b> — Browse hadith collections
+• <b>/search &lt;keyword&gt;</b> — Search hadith text
+• <b>/random</b> — Get a random hadith
+• <b>/help</b> — Show this help message
 
-💡 *Examples*
-• */search prayer*
-• */search patience*`
+💡 <b>Examples</b>
+• <b>/search prayer</b>
+• <b>/search patience</b>`
 	h.sendMessage(m.Chat.ID, helpText)
 }
 
@@ -120,7 +131,7 @@ func (h *Handler) handleRandom(m *tgbotapi.Message) {
 func (h *Handler) handleSearch(m *tgbotapi.Message) {
 	args := m.CommandArguments()
 	if args == "" {
-		h.sendMessage(m.Chat.ID, "🔎 Please provide a keyword. Example: */search prayer*")
+		h.sendMessage(m.Chat.ID, "🔎 Please provide a keyword. Example: <b>/search prayer</b>")
 		return
 	}
 	results := h.hadithService.SearchHadiths(args, 1, 10)
@@ -180,7 +191,7 @@ func (h *Handler) handleCallback(c *tgbotapi.CallbackQuery) {
 		res := h.hadithService.SearchHadiths(query, page, 5)
 		h.sendSearchResults(chatID, msgID, iMID, query, res)
 	case "help":
-		h.sendMessage(chatID, "Use */help* to view all commands and examples.")
+		h.sendMessage(chatID, "Use <b>/help</b> to view all commands and examples.")
 	}
 
 	h.bot.Request(tgbotapi.NewCallback(c.ID, ""))
@@ -193,8 +204,8 @@ func (h *Handler) handleInlineQuery(q *tgbotapi.InlineQuery) {
 	var results []interface{}
 
 	if query == "" || query == "collections" {
-		text := "📚 *Browse Hadith Collections*\nSelect a collection to view its books and hadiths."
-		article := tgbotapi.NewInlineQueryResultArticleMarkdown(q.ID+"_browse", "📚 Browse Collections", text)
+		text := "📚 <b>Browse Hadith Collections</b>\nSelect a collection to view its books and hadiths."
+		article := tgbotapi.NewInlineQueryResultArticleHTML(q.ID+"_browse", "📚 Browse Collections", text)
 		article.Description = "View Bukhari, Muslim, and other major collections"
 		kb := tgbotapi.NewInlineKeyboardMarkup(
 			tgbotapi.NewInlineKeyboardRow(
@@ -217,14 +228,14 @@ func (h *Handler) handleInlineQuery(q *tgbotapi.InlineQuery) {
 
 			display := pages[0]
 			if len(pages) > 1 {
-				display = fmt.Sprintf("*Page 1/%d*\n\n%s", len(pages), display)
+				display = fmt.Sprintf("<b>Page 1/%d</b>\n\n%s", len(pages), display)
 			}
 
 			article := tgbotapi.NewInlineQueryResultArticleHTML(q.ID, "🎲 Random Hadith", txt)
 			article.Description = fmt.Sprintf("Hadith #%d from %s", res.Hadith.HadithNumber, getCollectionTitle(res.Collection))
 			article.InputMessageContent = tgbotapi.InputTextMessageContent{
 				Text:      display,
-				ParseMode: tgbotapi.ModeMarkdown,
+				ParseMode: tgbotapi.ModeHTML,
 			}
 
 			var rows [][]tgbotapi.InlineKeyboardButton
@@ -255,7 +266,7 @@ func (h *Handler) handleInlineQuery(q *tgbotapi.InlineQuery) {
 
 				display := pages[0]
 				if len(pages) > 1 {
-					display = fmt.Sprintf("*Page 1/%d*\n\n%s", len(pages), display)
+					display = fmt.Sprintf("<b>Page 1/%d</b>\n\n%s", len(pages), display)
 				}
 
 				id := fmt.Sprintf("inline_%d_%d", hadith.HadithNumber, i)
@@ -263,7 +274,7 @@ func (h *Handler) handleInlineQuery(q *tgbotapi.InlineQuery) {
 				article.Description = truncate(hadith.English, 50)
 				article.InputMessageContent = tgbotapi.InputTextMessageContent{
 					Text:      display,
-					ParseMode: tgbotapi.ModeMarkdown,
+					ParseMode: tgbotapi.ModeHTML,
 				}
 
 				var rows [][]tgbotapi.InlineKeyboardButton
@@ -314,7 +325,7 @@ func (h *Handler) sendCollectionsMenu(chatID int64, msgID int, inlineMsgID strin
 		rows = append(rows, nav)
 	}
 
-	h.editOrSendMessage(chatID, msgID, inlineMsgID, "📚 *Select a Collection:*", tgbotapi.NewInlineKeyboardMarkup(rows...))
+	h.editOrSendMessage(chatID, msgID, inlineMsgID, "📚 <b>Select a Collection:</b>", tgbotapi.NewInlineKeyboardMarkup(rows...))
 }
 
 func (h *Handler) sendBooksMenu(chatID int64, msgID int, inlineMsgID string, col string, books []models.Book, page int) {
@@ -341,7 +352,7 @@ func (h *Handler) sendBooksMenu(chatID int64, msgID int, inlineMsgID string, col
 	}
 
 	rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("⬅️ Back to Collections", "collections:1")))
-	h.editOrSendMessage(chatID, msgID, inlineMsgID, fmt.Sprintf("📚 *%s — Books*", services.GetCollectionDisplayName(col)), tgbotapi.NewInlineKeyboardMarkup(rows...))
+	h.editOrSendMessage(chatID, msgID, inlineMsgID, fmt.Sprintf("📚 <b>%s — Books</b>", html.EscapeString(services.GetCollectionDisplayName(col))), tgbotapi.NewInlineKeyboardMarkup(rows...))
 }
 
 func (h *Handler) sendHadithsMenu(chatID int64, msgID int, inlineMsgID string, col string, bookNum int, result models.HadithResponse) {
@@ -362,7 +373,7 @@ func (h *Handler) sendHadithsMenu(chatID int64, msgID int, inlineMsgID string, c
 	}
 
 	rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("⬅️ Back to Books", fmt.Sprintf("books:%s:1", col))))
-	h.editOrSendMessage(chatID, msgID, inlineMsgID, fmt.Sprintf("📑 *Hadith List — Page %d/%d*", result.Page, result.TotalPages), tgbotapi.NewInlineKeyboardMarkup(rows...))
+	h.editOrSendMessage(chatID, msgID, inlineMsgID, fmt.Sprintf("📑 <b>Hadith List — Page %d/%d</b>", result.Page, result.TotalPages), tgbotapi.NewInlineKeyboardMarkup(rows...))
 }
 
 func (h *Handler) handleHadithDetailCallback(c *tgbotapi.CallbackQuery, parts []string) {
@@ -442,7 +453,7 @@ func (h *Handler) sendHadithDetailPaged(chatID int64, msgID int, inlineMsgID, co
 
 		display := pages[textPage]
 		if len(pages) > 1 {
-			display = fmt.Sprintf("*Page %d/%d*\n\n%s", textPage+1, len(pages), display)
+			display = fmt.Sprintf("<b>Page %d/%d</b>\n\n%s", textPage+1, len(pages), display)
 		}
 
 		var rows [][]tgbotapi.InlineKeyboardButton
@@ -459,7 +470,11 @@ func (h *Handler) sendHadithDetailPaged(chatID int64, msgID int, inlineMsgID, co
 			}
 		}
 
-		rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("⬅️ Back", fmt.Sprintf("hadiths:%s:%d:%d", col, bookNum, page))))
+		shareURL := fmt.Sprintf("https://t.me/%s?start=hadith_%s_%d", h.bot.Self.UserName, col, hadith.HadithNumber)
+		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("⬅️ Back", fmt.Sprintf("hadiths:%s:%d:%d", col, bookNum, page)),
+			tgbotapi.NewInlineKeyboardButtonURL("📤 Share", shareURL),
+		))
 		h.editOrSendMessage(chatID, msgID, inlineMsgID, display, tgbotapi.NewInlineKeyboardMarkup(rows...))
 	}
 }
@@ -506,7 +521,7 @@ func (h *Handler) sendSearchHadithPaged(chatID int64, msgID int, inlineMsgID, co
 
 	display := pages[textPage]
 	if len(pages) > 1 {
-		display = fmt.Sprintf("*Page %d/%d*\n\n%s", textPage+1, len(pages), display)
+		display = fmt.Sprintf("<b>Page %d/%d</b>\n\n%s", textPage+1, len(pages), display)
 	}
 
 	var rows [][]tgbotapi.InlineKeyboardButton
@@ -522,6 +537,11 @@ func (h *Handler) sendSearchHadithPaged(chatID int64, msgID int, inlineMsgID, co
 			rows = append(rows, nav)
 		}
 	}
+
+	shareURL := fmt.Sprintf("https://t.me/%s?start=hadith_%s_%d", h.bot.Self.UserName, colName, hadithNum)
+	rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+		tgbotapi.NewInlineKeyboardButtonURL("📤 Share", shareURL),
+	))
 
 	if inlineMsgID == "" {
 		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
@@ -568,7 +588,7 @@ func (h *Handler) sendRandomHadithPaged(chatID int64, msgID int, inlineMsgID, co
 
 	display := pages[textPage]
 	if len(pages) > 1 {
-		display = fmt.Sprintf("*Page %d/%d*\n\n%s", textPage+1, len(pages), display)
+		display = fmt.Sprintf("<b>Page %d/%d</b>\n\n%s", textPage+1, len(pages), display)
 	}
 
 	var rows [][]tgbotapi.InlineKeyboardButton
@@ -585,7 +605,11 @@ func (h *Handler) sendRandomHadithPaged(chatID int64, msgID int, inlineMsgID, co
 		}
 	}
 
-	rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("🎲 Another Random", "random")))
+	shareURL := fmt.Sprintf("https://t.me/%s?start=hadith_%s_%d", h.bot.Self.UserName, colName, hadithNum)
+	rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+		tgbotapi.NewInlineKeyboardButtonData("🎲 Another Random", "random"),
+		tgbotapi.NewInlineKeyboardButtonURL("📤 Share", shareURL),
+	))
 	h.editOrSendMessage(chatID, msgID, inlineMsgID, display, tgbotapi.NewInlineKeyboardMarkup(rows...))
 }
 
@@ -599,17 +623,17 @@ func (h *Handler) editOrSendMessage(chatID int64, msgID int, inlineMsgID string,
 				ReplyMarkup:     &kb,
 			},
 			Text:      text,
-			ParseMode: tgbotapi.ModeMarkdown,
+			ParseMode: tgbotapi.ModeHTML,
 		}
 		h.bot.Send(edit)
 	} else if msgID != 0 {
 		edit := tgbotapi.NewEditMessageText(chatID, msgID, text)
-		edit.ParseMode = tgbotapi.ModeMarkdown
+		edit.ParseMode = tgbotapi.ModeHTML
 		edit.ReplyMarkup = &kb
 		h.bot.Send(edit)
 	} else {
 		msg := tgbotapi.NewMessage(chatID, text)
-		msg.ParseMode = tgbotapi.ModeMarkdown
+		msg.ParseMode = tgbotapi.ModeHTML
 		msg.ReplyMarkup = kb
 		h.bot.Send(msg)
 	}
@@ -617,13 +641,13 @@ func (h *Handler) editOrSendMessage(chatID int64, msgID int, inlineMsgID string,
 
 func (h *Handler) sendMessage(chatID int64, text string) {
 	msg := tgbotapi.NewMessage(chatID, text)
-	msg.ParseMode = tgbotapi.ModeMarkdown
+	msg.ParseMode = tgbotapi.ModeHTML
 	h.bot.Send(msg)
 }
 
 func (h *Handler) sendMessageWithKeyboard(chatID int64, text string, kb tgbotapi.InlineKeyboardMarkup) {
 	msg := tgbotapi.NewMessage(chatID, text)
-	msg.ParseMode = tgbotapi.ModeMarkdown
+	msg.ParseMode = tgbotapi.ModeHTML
 	msg.ReplyMarkup = kb
 	h.bot.Send(msg)
 }
@@ -646,7 +670,7 @@ func (h *Handler) sendSearchResults(chatID int64, msgID int, inlineMsgID string,
 		rows = append(rows, nav)
 	}
 
-	h.editOrSendMessage(chatID, msgID, inlineMsgID, fmt.Sprintf("🔍 *Results for:* %s", escapeMarkdown(query)), tgbotapi.NewInlineKeyboardMarkup(rows...))
+	h.editOrSendMessage(chatID, msgID, inlineMsgID, fmt.Sprintf("🔍 <b>Results for:</b> %s", html.EscapeString(query)), tgbotapi.NewInlineKeyboardMarkup(rows...))
 }
 
 func (h *Handler) formatHadithDisplay(hdt *models.Hadith, col *models.Collection, b *models.Book) string {
@@ -665,30 +689,11 @@ func (h *Handler) formatHadithDisplay(hdt *models.Hadith, col *models.Collection
 
 	narrator := ""
 	if hdt.Narrator != "" {
-		narrator = fmt.Sprintf("\n*:* %s\n", escapeMarkdown(hdt.Narrator))
+		narrator = fmt.Sprintf("\n<b>Narrator:</b> %s\n", html.EscapeString(hdt.Narrator))
 	}
 
-	return fmt.Sprintf("📜 *Hadith*\n\n%s%s\n\n%s\n\n*Reference:* %s, Book %d, #%d\n*Grade:* %s",
-		escapeMarkdown(hdt.Arabic), narrator, escapeMarkdown(hdt.English), escapeMarkdown(colTitle), bookNum, hdt.HadithNumber, escapeMarkdown(grade))
-}
-
-func (h *Handler) formatHadithForInlineHTML(hadith *models.Hadith, collection *models.Collection, book *models.Book) string {
-	colTitle := "Unknown"
-	if collection != nil {
-		colTitle = collection.Title
-	}
-	grade := "Sahih"
-	if hadith.Grade != "" {
-		grade = hadith.Grade
-	}
-
-	narratorHTML := ""
-	if hadith.Narrator != "" {
-		narratorHTML = fmt.Sprintf("\n\n<b>:</b> %s", html.EscapeString(hadith.Narrator))
-	}
-
-	return fmt.Sprintf("📜 <b>Hadith</b>\n\n%s%s\n\n%s\n\n<b>Ref:</b> %s, #%d\n<b>Grade:</b> %s",
-		html.EscapeString(hadith.Arabic), narratorHTML, html.EscapeString(hadith.English), html.EscapeString(colTitle), hadith.HadithNumber, html.EscapeString(grade))
+	return fmt.Sprintf("📜 <b>Hadith</b>\n\n%s%s\n\n%s\n\n<b>Reference:</b> %s, Book %d, #%d\n<b>Grade:</b> %s",
+		html.EscapeString(hdt.Arabic), narrator, html.EscapeString(hdt.English), html.EscapeString(colTitle), bookNum, hdt.HadithNumber, html.EscapeString(grade))
 }
 
 func (h *Handler) findCollectionForHadith(hadith models.Hadith) string {
@@ -760,13 +765,6 @@ func splitTelegramMessage(text string, maxRunes int) []string {
 	return chunks
 }
 
-func escapeMarkdown(text string) string {
-	replacer := strings.NewReplacer(
-		"\\", "\\\\",
-		"_", "\\_",
-		"*", "\\*",
-		"[", "\\[",
-		"`", "\\`",
-	)
-	return replacer.Replace(text)
+func escapeHTML(text string) string {
+	return html.EscapeString(text)
 }
