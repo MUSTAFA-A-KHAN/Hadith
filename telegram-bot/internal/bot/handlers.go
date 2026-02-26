@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"hadith-bot/internal/image"
 	"hadith-bot/internal/logger"
 	"hadith-bot/internal/models"
 	"hadith-bot/internal/services"
@@ -17,18 +18,20 @@ import (
 const telegramMessageMaxRunes = 3800
 
 type Handler struct {
-	bot           *tgbotapi.BotAPI
-	hadithService *services.HadithService
-	log           *logger.Logger
-	rateLimiter   *RateLimiter
+	bot            *tgbotapi.BotAPI
+	hadithService  *services.HadithService
+	log            *logger.Logger
+	rateLimiter    *RateLimiter
+	imageGenerator *image.Generator
 }
 
-func NewHandler(bot *tgbotapi.BotAPI, hadithService *services.HadithService, log *logger.Logger, rateLimitRequests int, rateLimitWindow time.Duration) *Handler {
+func NewHandler(bot *tgbotapi.BotAPI, hadithService *services.HadithService, log *logger.Logger, rateLimitRequests int, rateLimitWindow time.Duration, imageGenerator *image.Generator) *Handler {
 	return &Handler{
-		bot:           bot,
-		hadithService: hadithService,
-		log:           log,
-		rateLimiter:   NewRateLimiter(rateLimitRequests, rateLimitWindow),
+		bot:            bot,
+		hadithService:  hadithService,
+		log:            log,
+		rateLimiter:    NewRateLimiter(rateLimitRequests, rateLimitWindow),
+		imageGenerator: imageGenerator,
 	}
 }
 
@@ -192,6 +195,8 @@ func (h *Handler) handleCallback(c *tgbotapi.CallbackQuery) {
 		h.sendSearchResults(chatID, msgID, iMID, query, res)
 	case "help":
 		h.sendMessage(chatID, "Use <b>/help</b> to view all commands and examples.")
+	case "hadith_image":
+		h.handleHadithImageCallback(c, parts)
 	}
 
 	h.bot.Request(tgbotapi.NewCallback(c.ID, ""))
@@ -473,6 +478,7 @@ func (h *Handler) sendHadithDetailPaged(chatID int64, msgID int, inlineMsgID, co
 		shareURL := fmt.Sprintf("https://t.me/%s?start=hadith_%s_%d", h.bot.Self.UserName, col, hadith.HadithNumber)
 		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData("⬅️ Back", fmt.Sprintf("hadiths:%s:%d:%d", col, bookNum, page)),
+			tgbotapi.NewInlineKeyboardButtonData("🎨 Image", fmt.Sprintf("hadith_image:%s:%d", col, hadith.HadithNumber)),
 			tgbotapi.NewInlineKeyboardButtonURL("📤 Share", shareURL),
 		))
 		h.editOrSendMessage(chatID, msgID, inlineMsgID, display, tgbotapi.NewInlineKeyboardMarkup(rows...))
@@ -540,6 +546,7 @@ func (h *Handler) sendSearchHadithPaged(chatID int64, msgID int, inlineMsgID, co
 
 	shareURL := fmt.Sprintf("https://t.me/%s?start=hadith_%s_%d", h.bot.Self.UserName, colName, hadithNum)
 	rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+		tgbotapi.NewInlineKeyboardButtonData("🎨 Image", fmt.Sprintf("hadith_image:%s:%d", colName, hadithNum)),
 		tgbotapi.NewInlineKeyboardButtonURL("📤 Share", shareURL),
 	))
 
@@ -608,9 +615,68 @@ func (h *Handler) sendRandomHadithPaged(chatID int64, msgID int, inlineMsgID, co
 	shareURL := fmt.Sprintf("https://t.me/%s?start=hadith_%s_%d", h.bot.Self.UserName, colName, hadithNum)
 	rows = append(rows, tgbotapi.NewInlineKeyboardRow(
 		tgbotapi.NewInlineKeyboardButtonData("🎲 Another Random", "random"),
+		tgbotapi.NewInlineKeyboardButtonData("🎨 Image", fmt.Sprintf("hadith_image:%s:%d", colName, hadithNum)),
 		tgbotapi.NewInlineKeyboardButtonURL("📤 Share", shareURL),
 	))
 	h.editOrSendMessage(chatID, msgID, inlineMsgID, display, tgbotapi.NewInlineKeyboardMarkup(rows...))
+}
+
+func (h *Handler) handleHadithImageCallback(c *tgbotapi.CallbackQuery, parts []string) {
+	// parts: hadith_image:collection:hadithNum
+	if len(parts) < 3 {
+		return
+	}
+	col := parts[1]
+	hadithNum, _ := strconv.Atoi(parts[2])
+
+	// Determine where to send the image
+	var chatID int64
+	if c.Message != nil {
+		chatID = c.Message.Chat.ID
+	} else {
+		// Inline button: try sending to user's private chat
+		chatID = c.From.ID
+	}
+
+	// Answer callback to show loading state (toast or just stop loading)
+	h.bot.Request(tgbotapi.NewCallback(c.ID, "🎨 Generating image..."))
+
+	// Fetch hadith
+	hadith, _ := h.hadithService.FindHadithByNumber(col, hadithNum)
+	if hadith == nil {
+		h.sendMessage(chatID, "⚠️ Could not find hadith.")
+		return
+	}
+
+	h.bot.Send(tgbotapi.NewChatAction(chatID, "upload_photo"))
+
+	// Generate image
+	book := h.hadithService.GetBook(col, hadith.ChapterID)
+	title := "Hadith"
+	if book != nil {
+		title = book.Title
+		// Clean up title if it has numbers like "1. Book of ..."
+		if idx := strings.Index(title, ". "); idx != -1 {
+			title = title[idx+2:]
+		}
+	}
+
+	ref := fmt.Sprintf("[%s: %d]", services.GetCollectionDisplayName(col), hadith.HadithNumber)
+
+	imgBytes, err := h.imageGenerator.GenerateHadithImage(title, hadith.Narrator, hadith.Arabic, hadith.English, ref)
+	if err != nil {
+		h.log.Error("Failed to generate image: %v", err)
+		h.sendMessage(chatID, "⚠️ Failed to generate image.")
+		return
+	}
+
+	// Send photo
+	photo := tgbotapi.NewPhoto(chatID, tgbotapi.FileBytes{
+		Name:  "hadith.png",
+		Bytes: imgBytes,
+	})
+	photo.Caption = fmt.Sprintf("Hadith #%d from %s", hadith.HadithNumber, services.GetCollectionDisplayName(col))
+	h.bot.Send(photo)
 }
 
 // --- FORMATTING & UTILS ---
