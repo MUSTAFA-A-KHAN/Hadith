@@ -33,11 +33,16 @@ func (g *Generator) GenerateHadithImage(title, narrator, arabicText, englishText
 
 	// --- Calculations ---
 
+	// Common max width
+	maxWidth := float64(W) - 160
+
 	// Title Height
 	if err := measureDC.LoadFontFace(englishFontPath, 110); err != nil {
 		return nil, fmt.Errorf("failed to load title font: %w", err)
 	}
-	titleHeight := measureDC.FontHeight()
+	titleLines := measureDC.WordWrap(strings.ToUpper(title), maxWidth)
+	titleLineHeight := measureDC.FontHeight() * 1.1
+	titleHeight := float64(len(titleLines)) * titleLineHeight
 
 	// Attribution Height
 	displayText := narrator
@@ -55,7 +60,6 @@ func (g *Generator) GenerateHadithImage(title, narrator, arabicText, englishText
 		return nil, fmt.Errorf("failed to load attribution font: %w", err)
 	}
 
-	maxWidth := float64(W) - 160
 	attributionLines := measureDC.WordWrap(displayText, maxWidth)
 	attributionHeight := float64(len(attributionLines)) * measureDC.FontHeight() * 1.2
 
@@ -140,7 +144,11 @@ func (g *Generator) GenerateHadithImage(title, narrator, arabicText, englishText
 	// Draw Title
 	dc.SetHexColor("#558B2F")
 	dc.LoadFontFace(englishFontPath, 110)
-	dc.DrawStringAnchored(strings.ToUpper(title), float64(W)/2, titleY, 0.5, 0.5)
+	currentTitleY := titleY - (titleHeight / 2) + (titleLineHeight / 2)
+	for _, line := range titleLines {
+		dc.DrawStringAnchored(line, float64(W)/2, currentTitleY, 0.5, 0.5)
+		currentTitleY += titleLineHeight
+	}
 
 	// Draw Attribution
 	dc.SetHexColor("#1a1a1a")
