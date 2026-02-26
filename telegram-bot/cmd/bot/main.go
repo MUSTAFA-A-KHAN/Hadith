@@ -11,6 +11,7 @@ import (
 
 	botpkg "hadith-bot/internal/bot"
 	"hadith-bot/internal/config"
+	"hadith-bot/internal/image"
 	"hadith-bot/internal/logger"
 	"hadith-bot/internal/services"
 )
@@ -69,6 +70,10 @@ func main() {
 	hadithService := services.NewHadithService(dataDir, cfg.APIURL, cfg.APIKey, cfg.APITimeout, log)
 	log.Info("Hadith service initialized")
 
+	// Create image generator
+	imageGenerator := image.NewGenerator("./assets/fonts")
+	log.Info("Image generator initialized")
+
 	// Create handler
 	handler := botpkg.NewHandler(
 		bot,
@@ -76,6 +81,7 @@ func main() {
 		log,
 		cfg.RateLimitRequests,
 		cfg.RateLimitWindow,
+		imageGenerator,
 	)
 
 	log.Info("Bot is ready to handle commands")
