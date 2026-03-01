@@ -23,15 +23,68 @@ type Handler struct {
 	log            *logger.Logger
 	rateLimiter    *RateLimiter
 	imageGenerator *image.Generator
+	state          *StateManager
 }
 
-func NewHandler(bot *tgbotapi.BotAPI, hadithService *services.HadithService, log *logger.Logger, rateLimitRequests int, rateLimitWindow time.Duration, imageGenerator *image.Generator) *Handler {
+func NewHandler(bot *tgbotapi.BotAPI, hadithService *services.HadithService, log *logger.Logger, rateLimitRequests int, rateLimitWindow time.Duration, imageGenerator *image.Generator, state *StateManager) *Handler {
 	return &Handler{
 		bot:            bot,
 		hadithService:  hadithService,
 		log:            log,
 		rateLimiter:    NewRateLimiter(rateLimitRequests, rateLimitWindow),
 		imageGenerator: imageGenerator,
+		state:          state,
+	}
+}
+
+func (h *Handler) StartScheduler() {
+	ticker := time.NewTicker(1 * time.Minute)
+	go func() {
+		for range ticker.C {
+			h.processSchedules()
+		}
+	}()
+}
+
+func (h *Handler) processSchedules() {
+	states := h.state.GetAll()
+	now := time.Now()
+
+	for chatID, chatState := range states {
+		if chatState.ScheduleInterval > 0 && now.Sub(chatState.LastSentAt) >= chatState.ScheduleInterval {
+			// Update the time first to prevent double-sending if this takes a while
+			chatState.LastSentAt = now
+			h.state.SetChatState(chatID, chatState)
+
+			// Generate and send random hadith image
+			res := h.hadithService.GetRandomHadith()
+			if res.Hadith == nil || res.Collection == nil {
+				continue // skip if we fail to fetch a random hadith
+			}
+
+			book := h.hadithService.GetBook(res.Collection.Name, res.Hadith.ChapterID)
+			title := "Hadith"
+			if book != nil {
+				title = book.Title
+				if idx := strings.Index(title, ". "); idx != -1 {
+					title = title[idx+2:]
+				}
+			}
+
+			ref := fmt.Sprintf("[%s: %d]", services.GetCollectionDisplayName(res.Collection.Name), res.Hadith.HadithNumber)
+
+			imgBytes, err := h.imageGenerator.GenerateHadithImage(title, res.Hadith.Narrator, res.Hadith.Arabic, res.Hadith.English, ref, chatState.UseCustomBg)
+			if err != nil {
+				h.log.Error("Failed to generate scheduled image for %d: %v", chatID, err)
+				continue
+			}
+
+			photo := tgbotapi.NewPhoto(chatID, tgbotapi.FileBytes{
+				Name:  "hadith.png",
+				Bytes: imgBytes,
+			})
+			h.bot.Send(photo)
+		}
 	}
 }
 
@@ -69,6 +122,10 @@ func (h *Handler) handleIncomingMessage(m *tgbotapi.Message) {
 			h.handleSearch(m)
 		case "collections":
 			h.handleCollections(m)
+		case "togglebackgrounds":
+			h.handleToggleBackgrounds(m)
+		case "schedule":
+			h.handleSchedule(m)
 		}
 	}
 }
@@ -76,6 +133,15 @@ func (h *Handler) handleIncomingMessage(m *tgbotapi.Message) {
 // --- COMMAND HANDLERS ---
 
 func (h *Handler) handleStart(m *tgbotapi.Message) {
+	chatState := h.state.GetChatState(m.Chat.ID)
+	if chatState == nil {
+		chatState = &ChatState{
+			ScheduleInterval: 6 * time.Hour,
+			LastSentAt:       time.Now(),
+		}
+		h.state.SetChatState(m.Chat.ID, chatState)
+	}
+
 	args := m.CommandArguments()
 	if strings.HasPrefix(args, "hadith_") {
 		parts := strings.Split(args, "_")
@@ -114,6 +180,7 @@ func (h *Handler) handleHelp(m *tgbotapi.Message) {
 • <b>/collections</b> — Browse hadith collections
 • <b>/search &lt;keyword&gt;</b> — Search hadith text
 • <b>/random</b> — Get a random hadith
+• <b>/togglebackgrounds</b> — Toggle custom image backgrounds for generated images
 • <b>/help</b> — Show this help message
 
 💡 <b>Examples</b>
@@ -147,6 +214,83 @@ func (h *Handler) handleSearch(m *tgbotapi.Message) {
 
 func (h *Handler) handleCollections(m *tgbotapi.Message) {
 	h.sendCollectionsMenu(m.Chat.ID, 0, "", h.hadithService.GetCollections(), 1)
+}
+
+func (h *Handler) handleSchedule(m *tgbotapi.Message) {
+	if m.Chat.IsGroup() || m.Chat.IsSuperGroup() {
+		member, err := h.bot.GetChatMember(tgbotapi.GetChatMemberConfig{
+			ChatConfigWithUser: tgbotapi.ChatConfigWithUser{
+				ChatID: m.Chat.ID,
+				UserID: m.From.ID,
+			},
+		})
+
+		if err != nil || (!member.IsCreator() && !member.IsAdministrator()) {
+			h.sendMessage(m.Chat.ID, "⚠️ Only group administrators can change the schedule.")
+			return
+		}
+	}
+
+	args := strings.TrimSpace(m.CommandArguments())
+	chatState := h.state.GetChatState(m.Chat.ID)
+	if chatState == nil {
+		chatState = &ChatState{
+			LastSentAt: time.Now(),
+		}
+	}
+
+	if args == "" {
+		if chatState.ScheduleInterval > 0 {
+			h.sendMessage(m.Chat.ID, fmt.Sprintf("🕒 Current schedule is set to **%v**.\n\nUse `/schedule off` to disable, or `/schedule <duration>` to change (e.g., `2h`, `12h`).", chatState.ScheduleInterval))
+		} else {
+			h.sendMessage(m.Chat.ID, "🕒 There is currently no active schedule.\n\nUse `/schedule <duration>` to enable (e.g., `2h`, `6h`, `12h`).")
+		}
+		return
+	}
+
+	if strings.ToLower(args) == "off" {
+		chatState.ScheduleInterval = 0
+		h.state.SetChatState(m.Chat.ID, chatState)
+		h.sendMessage(m.Chat.ID, "✅ Automatic scheduled messages have been turned **OFF**.")
+		return
+	}
+
+	d, err := time.ParseDuration(args)
+	if err != nil || d <= 0 {
+		h.sendMessage(m.Chat.ID, "⚠️ Invalid duration format. Please use something like `2h`, `6h`, or `12h`.")
+		return
+	}
+
+	chatState.ScheduleInterval = d
+	// Reset the timer when they set a new schedule
+	chatState.LastSentAt = time.Now()
+	h.state.SetChatState(m.Chat.ID, chatState)
+
+	h.sendMessage(m.Chat.ID, fmt.Sprintf("✅ Schedule updated! A random hadith image will be sent every **%v**.", d))
+}
+
+func (h *Handler) handleToggleBackgrounds(m *tgbotapi.Message) {
+	userID := m.From.ID
+
+	chatState := h.state.GetChatState(userID)
+	if chatState == nil {
+		chatState = &ChatState{}
+	}
+
+	newSetting := !chatState.UseCustomBg
+	chatState.UseCustomBg = newSetting
+
+	h.state.SetChatState(userID, chatState)
+
+	var status string
+	if newSetting {
+		status = "ON 🎨 (Custom Image Backgrounds)"
+	} else {
+		status = "OFF 📜 (Default Pattern Background)"
+	}
+
+	text := fmt.Sprintf("✅ Custom backgrounds are now <b>%s</b> for generated images.", status)
+	h.sendMessage(m.Chat.ID, text)
 }
 
 // --- CALLBACK HANDLER ---
@@ -663,7 +807,12 @@ func (h *Handler) handleHadithImageCallback(c *tgbotapi.CallbackQuery, parts []s
 
 	ref := fmt.Sprintf("[%s: %d]", services.GetCollectionDisplayName(col), hadith.HadithNumber)
 
-	imgBytes, err := h.imageGenerator.GenerateHadithImage(title, hadith.Narrator, hadith.Arabic, hadith.English, ref)
+	useCustomBg := false
+	if chatState := h.state.GetChatState(c.From.ID); chatState != nil {
+		useCustomBg = chatState.UseCustomBg
+	}
+
+	imgBytes, err := h.imageGenerator.GenerateHadithImage(title, hadith.Narrator, hadith.Arabic, hadith.English, ref, useCustomBg)
 	if err != nil {
 		h.log.Error("Failed to generate image: %v", err)
 		h.sendMessage(chatID, "⚠️ Failed to generate image.")

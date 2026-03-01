@@ -2,9 +2,11 @@ package main
 
 import (
 	"fmt"
+	"math/rand"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/joho/godotenv"
@@ -17,6 +19,8 @@ import (
 )
 
 func main() {
+	rand.Seed(time.Now().UnixNano())
+
 	// Load .env file if exists
 	godotenv.Load()
 
@@ -71,8 +75,12 @@ func main() {
 	log.Info("Hadith service initialized")
 
 	// Create image generator
-	imageGenerator := image.NewGenerator("./assets/fonts")
+	imageGenerator := image.NewGenerator("./assets/fonts", "./assets/backgrounds")
 	log.Info("Image generator initialized")
+
+	// Initialize state manager
+	stateManager := botpkg.NewStateManager("./data/state.json")
+	log.Info("State manager initialized")
 
 	// Create handler
 	handler := botpkg.NewHandler(
@@ -82,9 +90,14 @@ func main() {
 		cfg.RateLimitRequests,
 		cfg.RateLimitWindow,
 		imageGenerator,
+		stateManager,
 	)
 
 	log.Info("Bot is ready to handle commands")
+
+	// Start scheduler for random hadiths
+	handler.StartScheduler()
+	log.Info("Scheduler started")
 
 	// Handle graceful shutdown
 	go func() {
