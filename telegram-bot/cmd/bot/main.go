@@ -78,6 +78,10 @@ func main() {
 	imageGenerator := image.NewGenerator("./assets/fonts", "./assets/backgrounds")
 	log.Info("Image generator initialized")
 
+	// Initialize state manager
+	stateManager := botpkg.NewStateManager("./data/state.json")
+	log.Info("State manager initialized")
+
 	// Create handler
 	handler := botpkg.NewHandler(
 		bot,
@@ -86,9 +90,14 @@ func main() {
 		cfg.RateLimitRequests,
 		cfg.RateLimitWindow,
 		imageGenerator,
+		stateManager,
 	)
 
 	log.Info("Bot is ready to handle commands")
+
+	// Start scheduler for random hadiths
+	handler.StartScheduler()
+	log.Info("Scheduler started")
 
 	// Handle graceful shutdown
 	go func() {
