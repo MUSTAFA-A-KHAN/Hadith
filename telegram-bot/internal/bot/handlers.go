@@ -5,6 +5,7 @@ import (
 	"html"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"hadith-bot/internal/image"
@@ -18,20 +19,23 @@ import (
 const telegramMessageMaxRunes = 3800
 
 type Handler struct {
-	bot            *tgbotapi.BotAPI
-	hadithService  *services.HadithService
-	log            *logger.Logger
-	rateLimiter    *RateLimiter
-	imageGenerator *image.Generator
+	bot                   *tgbotapi.BotAPI
+	hadithService         *services.HadithService
+	log                   *logger.Logger
+	rateLimiter           *RateLimiter
+	imageGenerator        *image.Generator
+	bgMutex               sync.RWMutex
+	userCustomBackgrounds map[int64]bool
 }
 
 func NewHandler(bot *tgbotapi.BotAPI, hadithService *services.HadithService, log *logger.Logger, rateLimitRequests int, rateLimitWindow time.Duration, imageGenerator *image.Generator) *Handler {
 	return &Handler{
-		bot:            bot,
-		hadithService:  hadithService,
-		log:            log,
-		rateLimiter:    NewRateLimiter(rateLimitRequests, rateLimitWindow),
-		imageGenerator: imageGenerator,
+		bot:                   bot,
+		hadithService:         hadithService,
+		log:                   log,
+		rateLimiter:           NewRateLimiter(rateLimitRequests, rateLimitWindow),
+		imageGenerator:        imageGenerator,
+		userCustomBackgrounds: make(map[int64]bool),
 	}
 }
 
@@ -69,6 +73,8 @@ func (h *Handler) handleIncomingMessage(m *tgbotapi.Message) {
 			h.handleSearch(m)
 		case "collections":
 			h.handleCollections(m)
+		case "togglebackgrounds":
+			h.handleToggleBackgrounds(m)
 		}
 	}
 }
@@ -114,6 +120,7 @@ func (h *Handler) handleHelp(m *tgbotapi.Message) {
 • <b>/collections</b> — Browse hadith collections
 • <b>/search &lt;keyword&gt;</b> — Search hadith text
 • <b>/random</b> — Get a random hadith
+• <b>/togglebackgrounds</b> — Toggle custom image backgrounds for generated images
 • <b>/help</b> — Show this help message
 
 💡 <b>Examples</b>
@@ -147,6 +154,26 @@ func (h *Handler) handleSearch(m *tgbotapi.Message) {
 
 func (h *Handler) handleCollections(m *tgbotapi.Message) {
 	h.sendCollectionsMenu(m.Chat.ID, 0, "", h.hadithService.GetCollections(), 1)
+}
+
+func (h *Handler) handleToggleBackgrounds(m *tgbotapi.Message) {
+	userID := m.From.ID
+
+	h.bgMutex.Lock()
+	currentSetting := h.userCustomBackgrounds[userID]
+	newSetting := !currentSetting
+	h.userCustomBackgrounds[userID] = newSetting
+	h.bgMutex.Unlock()
+
+	var status string
+	if newSetting {
+		status = "ON 🎨 (Custom Image Backgrounds)"
+	} else {
+		status = "OFF 📜 (Default Pattern Background)"
+	}
+
+	text := fmt.Sprintf("✅ Custom backgrounds are now <b>%s</b> for generated images.", status)
+	h.sendMessage(m.Chat.ID, text)
 }
 
 // --- CALLBACK HANDLER ---
@@ -663,7 +690,11 @@ func (h *Handler) handleHadithImageCallback(c *tgbotapi.CallbackQuery, parts []s
 
 	ref := fmt.Sprintf("[%s: %d]", services.GetCollectionDisplayName(col), hadith.HadithNumber)
 
-	imgBytes, err := h.imageGenerator.GenerateHadithImage(title, hadith.Narrator, hadith.Arabic, hadith.English, ref)
+	h.bgMutex.RLock()
+	useCustomBg := h.userCustomBackgrounds[c.From.ID]
+	h.bgMutex.RUnlock()
+
+	imgBytes, err := h.imageGenerator.GenerateHadithImage(title, hadith.Narrator, hadith.Arabic, hadith.English, ref, useCustomBg)
 	if err != nil {
 		h.log.Error("Failed to generate image: %v", err)
 		h.sendMessage(chatID, "⚠️ Failed to generate image.")

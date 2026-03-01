@@ -3,6 +3,7 @@ package image
 import (
 	"bytes"
 	"fmt"
+	"image"
 	"math"
 	"math/rand"
 	"path/filepath"
@@ -15,15 +16,31 @@ import (
 
 type Generator struct {
 	fontDir string
+	bgDir   string
+	bgImages []image.Image
 }
 
-func NewGenerator(fontDir string) *Generator {
+func NewGenerator(fontDir, bgDir string) *Generator {
+	var images []image.Image
+	if bgDir != "" {
+		jpegFiles, _ := filepath.Glob(filepath.Join(bgDir, "*.jpeg"))
+		jpgFiles, _ := filepath.Glob(filepath.Join(bgDir, "*.jpg"))
+		files := append(jpegFiles, jpgFiles...)
+		for _, file := range files {
+			if im, err := gg.LoadImage(file); err == nil {
+				images = append(images, im)
+			}
+		}
+	}
+
 	return &Generator{
-		fontDir: fontDir,
+		fontDir:  fontDir,
+		bgDir:    bgDir,
+		bgImages: images,
 	}
 }
 
-func (g *Generator) GenerateHadithImage(title, narrator, arabicText, englishText, reference string) ([]byte, error) {
+func (g *Generator) GenerateHadithImage(title, narrator, arabicText, englishText, reference string, useCustomBg bool) ([]byte, error) {
 	const W = 1080
 	// 1. Measure text to determine dynamic height
 	measureDC := gg.NewContext(W, 100)
@@ -139,10 +156,33 @@ func (g *Generator) GenerateHadithImage(title, narrator, arabicText, englishText
 
 	// --- 2. Drawing ---
 	dc := gg.NewContext(W, totalH)
-	g.drawBackground(dc)
+
+	textColorMain := "#1a1a1a"
+	textColorRef := "#4a4a4a"
+	titleColor := "#558B2F"
+
+	if useCustomBg && g.bgDir != "" {
+		im, err := g.getRandomCustomBackground()
+		if err == nil {
+			g.drawCustomBackground(dc, im, W, totalH)
+			// For custom backgrounds, we overlay a dimming layer
+			dc.SetRGBA(0, 0, 0, 0.6)
+			dc.DrawRectangle(0, 0, float64(W), float64(totalH))
+			dc.Fill()
+
+			// Use white/light colors for text to be readable on dark overlay
+			textColorMain = "#FFFFFF"
+			textColorRef = "#DDDDDD"
+			titleColor = "#FFFFFF"
+		} else {
+			g.drawBackground(dc)
+		}
+	} else {
+		g.drawBackground(dc)
+	}
 
 	// Draw Title
-	dc.SetHexColor("#558B2F")
+	dc.SetHexColor(titleColor)
 	dc.LoadFontFace(englishFontPath, 110)
 	currentTitleY := titleY - (titleHeight / 2) + (titleLineHeight / 2)
 	for _, line := range titleLines {
@@ -151,7 +191,7 @@ func (g *Generator) GenerateHadithImage(title, narrator, arabicText, englishText
 	}
 
 	// Draw Attribution
-	dc.SetHexColor("#1a1a1a")
+	dc.SetHexColor(textColorMain)
 	if strings.Contains(displayText, "ﷺ") {
 		// Centered single line approach for mixed font (simplified)
 		// We use the first line of attributionLines if wrapping happened, but mixed font wrapping is complex.
@@ -208,7 +248,7 @@ func (g *Generator) GenerateHadithImage(title, narrator, arabicText, englishText
 	}
 
 	// Draw Arabic
-	dc.SetHexColor("#000000")
+	dc.SetHexColor(textColorMain)
 	dc.LoadFontFace(arabicFontPath, 70)
 	for i, line := range shapedArabicLines {
 		// line is already shaped and in Visual Order.
@@ -220,7 +260,7 @@ func (g *Generator) GenerateHadithImage(title, narrator, arabicText, englishText
 	}
 
 	// Draw English
-	dc.SetHexColor("#1a1a1a")
+	dc.SetHexColor(textColorMain)
 	dc.LoadFontFace(englishFontPath, 60)
 	for i, line := range englishLines {
 		offsetY := float64(i)*englishLineHeight - (englishTotalHeight/2) + (englishLineHeight/2)
@@ -264,13 +304,17 @@ func (g *Generator) GenerateHadithImage(title, narrator, arabicText, englishText
 	}
 
 	// Draw Reference
-	dc.SetHexColor("#4a4a4a")
+	dc.SetHexColor(textColorRef)
 	dc.LoadFontFace(englishFontPath, 40)
 	dc.DrawStringAnchored(reference, float64(W)/2, refY, 0.5, 0.5)
 
 	// Draw Bismillah Header (Decorative)
 	dc.LoadFontFace(arabicFontPath, 40)
-	dc.SetHexColor("#556B2F") // Olive
+	if titleColor == "#FFFFFF" {
+		dc.SetHexColor("#FFFFFF")
+	} else {
+		dc.SetHexColor("#556B2F") // Olive
+	}
 	dc.DrawStringAnchored(garabic.Shape("بسم الله الرحمن الرحيم"), float64(W)/2, 65, 0.5, 0.5)
 
 	var buf bytes.Buffer
@@ -377,4 +421,32 @@ func drawCorner(dc *gg.Context, x, y float64, corner int) {
 
 func (g *Generator) getFontPath(fontName string) string {
 	return filepath.Join(g.fontDir, fontName)
+}
+
+func (g *Generator) getRandomCustomBackground() (image.Image, error) {
+	if len(g.bgImages) == 0 {
+		return nil, fmt.Errorf("no background images found")
+	}
+
+	return g.bgImages[rand.Intn(len(g.bgImages))], nil
+}
+
+func (g *Generator) drawCustomBackground(dc *gg.Context, im image.Image, W, H int) {
+	iw := im.Bounds().Dx()
+	ih := im.Bounds().Dy()
+
+	// Scale and center crop to fill the canvas
+	scale := math.Max(float64(W)/float64(iw), float64(H)/float64(ih))
+
+	newW := float64(iw) * scale
+	newH := float64(ih) * scale
+
+	x := (float64(W) - newW) / 2
+	y := (float64(H) - newH) / 2
+
+	dc.Push()
+	dc.Translate(x, y)
+	dc.Scale(scale, scale)
+	dc.DrawImage(im, 0, 0)
+	dc.Pop()
 }

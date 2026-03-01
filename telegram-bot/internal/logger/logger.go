@@ -165,6 +165,6 @@ func (l *Logger) LogError(err error, context string) {
 
 // LogCallback logs a callback query
 func (l *Logger) LogCallback(callbackID string, chatID int64, data string) {
-	l.Debug("Callback: callback_id=%s chat_id=%s data=%s", callbackID, chatID, data)
+	l.Debug("Callback: callback_id=%s chat_id=%d data=%s", callbackID, chatID, data)
 }
 
