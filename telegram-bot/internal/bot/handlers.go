@@ -83,7 +83,13 @@ func (h *Handler) processSchedules() {
 				Name:  "hadith.png",
 				Bytes: imgBytes,
 			})
-			h.bot.Send(photo)
+			_, err = h.bot.Send(photo)
+
+			// If sending the photo fails (e.g., media disabled in group), fallback to text mode
+			if err != nil {
+				h.log.Error("Failed to send scheduled image for %d (falling back to text): %v", chatID, err)
+				h.sendRandomHadithPaged(chatID, 0, "", res.Collection.Name, res.Hadith.HadithNumber, 0)
+			}
 		}
 	}
 }
