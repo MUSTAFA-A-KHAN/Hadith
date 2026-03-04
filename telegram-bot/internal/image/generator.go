@@ -40,12 +40,15 @@ func NewGenerator(fontDir, bgDir string) *Generator {
 	}
 }
 
-func (g *Generator) GenerateHadithImage(title, narrator, arabicText, englishText, reference string, useCustomBg bool) ([]byte, error) {
+func (g *Generator) GenerateHadithImage(title, narrator, arabicText, englishText, reference string, useCustomBg, useClassicArabicFont bool) ([]byte, error) {
 	const W = 1080
 	// 1. Measure text to determine dynamic height
 	measureDC := gg.NewContext(W, 100)
 
 	arabicFontPath := g.getFontPath("Amiri-Regular.ttf")
+	if useClassicArabicFont {
+		arabicFontPath = g.getFontPath("ScheherazadeNew-Regular.ttf")
+	}
 	englishFontPath := g.getFontPath("Caveat-Regular.ttf")
 
 	// --- Calculations ---
@@ -276,7 +279,7 @@ func (g *Generator) GenerateHadithImage(title, narrator, arabicText, englishText
 				w, _ := dc.MeasureString(part)
 				totalW += w
 				if i < len(parts)-1 {
-					dc.LoadFontFace(arabicFontPath, 60)
+						dc.LoadFontFace(arabicFontPath, 60)
 					w, _ = dc.MeasureString("ﷺ")
 					totalW += w
 				}
@@ -291,7 +294,7 @@ func (g *Generator) GenerateHadithImage(title, narrator, arabicText, englishText
 				w, _ := dc.MeasureString(part)
 				curX += w
 				if i < len(parts)-1 {
-					dc.LoadFontFace(arabicFontPath, 60)
+						dc.LoadFontFace(arabicFontPath, 60)
 					dc.DrawStringAnchored("ﷺ", curX, lineY, 0, 0.5)
 					w, _ = dc.MeasureString("ﷺ")
 					curX += w
