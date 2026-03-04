@@ -9,10 +9,9 @@ import (
 )
 
 type ChatState struct {
-	UseCustomBg          bool          `json:"use_custom_bg"`
-	UseClassicArabicFont bool          `json:"use_classic_arabic_font"`
-	ScheduleInterval     time.Duration `json:"schedule_interval"`
-	LastSentAt           time.Time     `json:"last_sent_at"`
+	UseCustomBg      bool          `json:"use_custom_bg"`
+	ScheduleInterval time.Duration `json:"schedule_interval"`
+	LastSentAt       time.Time     `json:"last_sent_at"`
 }
 
 type StateManager struct {
