@@ -18,22 +18,24 @@ import (
 const telegramMessageMaxRunes = 3800
 
 type Handler struct {
-	bot            *tgbotapi.BotAPI
-	hadithService  *services.HadithService
-	log            *logger.Logger
-	rateLimiter    *RateLimiter
-	imageGenerator *image.Generator
-	state          *StateManager
+	bot                 *tgbotapi.BotAPI
+	hadithService       *services.HadithService
+	log                 *logger.Logger
+	rateLimiter         *RateLimiter
+	imageGenerator      *image.Generator
+	state               *StateManager
+	imageCacheChannelID int64
 }
 
-func NewHandler(bot *tgbotapi.BotAPI, hadithService *services.HadithService, log *logger.Logger, rateLimitRequests int, rateLimitWindow time.Duration, imageGenerator *image.Generator, state *StateManager) *Handler {
+func NewHandler(bot *tgbotapi.BotAPI, hadithService *services.HadithService, log *logger.Logger, rateLimitRequests int, rateLimitWindow time.Duration, imageGenerator *image.Generator, state *StateManager, imageCacheChannelID int64) *Handler {
 	return &Handler{
-		bot:            bot,
-		hadithService:  hadithService,
-		log:            log,
-		rateLimiter:    NewRateLimiter(rateLimitRequests, rateLimitWindow),
-		imageGenerator: imageGenerator,
-		state:          state,
+		bot:                 bot,
+		hadithService:       hadithService,
+		log:                 log,
+		rateLimiter:         NewRateLimiter(rateLimitRequests, rateLimitWindow),
+		imageGenerator:      imageGenerator,
+		state:               state,
+		imageCacheChannelID: imageCacheChannelID,
 	}
 }
 
@@ -405,6 +407,62 @@ func (h *Handler) handleInlineQuery(q *tgbotapi.InlineQuery) {
 			kb := tgbotapi.NewInlineKeyboardMarkup(rows...)
 			article.ReplyMarkup = &kb
 			results = append(results, article)
+		}
+	} else if strings.HasPrefix(query, "image-search ") {
+		keyword := strings.TrimSpace(strings.TrimPrefix(query, "image-search "))
+		if keyword != "" {
+			if h.imageCacheChannelID == 0 {
+				article := tgbotapi.NewInlineQueryResultArticle(q.ID+"_err", "⚠️ Image Search Unavailable", "The bot administrator has not configured an image cache channel. Image search is currently disabled.")
+				results = append(results, article)
+			} else {
+				searchRes := h.hadithService.SearchHadiths(keyword, 1, 1) // only top 1 result
+				if len(searchRes.Hadiths) > 0 {
+					hadith := searchRes.Hadiths[0]
+					colName := h.findCollectionForHadith(hadith)
+					book := h.hadithService.GetBook(colName, hadith.ChapterID)
+
+					title := "Hadith"
+					if book != nil {
+						title = book.Title
+						if idx := strings.Index(title, ". "); idx != -1 {
+							title = title[idx+2:]
+						}
+					}
+					ref := fmt.Sprintf("[%s: %d]", services.GetCollectionDisplayName(colName), hadith.HadithNumber)
+
+					useCustomBg := false
+					if chatState := h.state.GetChatState(int64(q.From.ID)); chatState != nil {
+						useCustomBg = chatState.UseCustomBg
+					}
+
+					imgBytes, err := h.imageGenerator.GenerateHadithImage(title, hadith.Narrator, hadith.Arabic, hadith.English, ref, useCustomBg)
+					if err == nil {
+						photoMsg := tgbotapi.NewPhoto(h.imageCacheChannelID, tgbotapi.FileBytes{
+							Name:  "hadith.png",
+							Bytes: imgBytes,
+						})
+
+						sentMsg, err := h.bot.Send(photoMsg)
+						if err == nil && len(sentMsg.Photo) > 0 {
+							// get the largest photo
+							largestPhoto := sentMsg.Photo[len(sentMsg.Photo)-1]
+							fileID := largestPhoto.FileID
+
+							photoResult := tgbotapi.NewInlineQueryResultCachedPhoto(q.ID+"_img", fileID)
+							results = append(results, photoResult)
+						} else {
+							h.log.Error("Failed to send image to cache channel: %v", err)
+						}
+					} else {
+						h.log.Error("Failed to generate image for inline query: %v", err)
+					}
+				}
+
+				if len(results) == 0 {
+					article := tgbotapi.NewInlineQueryResultArticle(q.ID+"_nores", "No results found", "Could not find any hadiths matching your query or an error occurred.")
+					results = append(results, article)
+				}
+			}
 		}
 	} else if strings.HasPrefix(query, "search ") {
 		keyword := strings.TrimSpace(strings.TrimPrefix(query, "search "))

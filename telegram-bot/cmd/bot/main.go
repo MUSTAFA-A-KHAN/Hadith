@@ -91,6 +91,7 @@ func main() {
 		cfg.RateLimitWindow,
 		imageGenerator,
 		stateManager,
+		cfg.ImageCacheChannelID,
 	)
 
 	log.Info("Bot is ready to handle commands")
