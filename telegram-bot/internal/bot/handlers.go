@@ -75,7 +75,7 @@ func (h *Handler) processSchedules() {
 
 			ref := fmt.Sprintf("[%s: %d]", services.GetCollectionDisplayName(res.Collection.Name), res.Hadith.HadithNumber)
 
-			imgBytes, err := h.imageGenerator.GenerateHadithImage(title, res.Hadith.Narrator, res.Hadith.Arabic, res.Hadith.English, ref, chatState.UseCustomBg)
+			imgBytes, err := h.imageGenerator.GenerateHadithImage(title, res.Hadith.Narrator, res.Hadith.Arabic, res.Hadith.English, ref, chatState.UseCustomBg, chatState.UseClassicArabicFont)
 			if err != nil {
 				h.log.Error("Failed to generate scheduled image for %d: %v", chatID, err)
 				continue
@@ -132,6 +132,8 @@ func (h *Handler) handleIncomingMessage(m *tgbotapi.Message) {
 			h.handleCollections(m)
 		case "togglebackgrounds":
 			h.handleToggleBackgrounds(m)
+		case "togglearabic":
+			h.handleToggleArabic(m)
 		case "schedule":
 			h.handleSchedule(m)
 		}
@@ -144,8 +146,9 @@ func (h *Handler) handleStart(m *tgbotapi.Message) {
 	chatState := h.state.GetChatState(m.Chat.ID)
 	if chatState == nil {
 		chatState = &ChatState{
-			ScheduleInterval: 6 * time.Hour,
-			LastSentAt:       time.Now(),
+			ScheduleInterval:     6 * time.Hour,
+			LastSentAt:           time.Now(),
+			UseClassicArabicFont: true,
 		}
 		h.state.SetChatState(m.Chat.ID, chatState)
 	}
@@ -189,6 +192,7 @@ func (h *Handler) handleHelp(m *tgbotapi.Message) {
 • <b>/search &lt;keyword&gt;</b> — Search hadith text
 • <b>/random</b> — Get a random hadith
 • <b>/togglebackgrounds</b> — Toggle custom image backgrounds for generated images
+• <b>/togglearabic</b> — Toggle classic Arabic font for generated images
 • <b>/help</b> — Show this help message
 
 💡 <b>Examples</b>
@@ -298,6 +302,30 @@ func (h *Handler) handleToggleBackgrounds(m *tgbotapi.Message) {
 	}
 
 	text := fmt.Sprintf("✅ Custom backgrounds are now <b>%s</b> for generated images.", status)
+	h.sendMessage(m.Chat.ID, text)
+}
+
+func (h *Handler) handleToggleArabic(m *tgbotapi.Message) {
+	chatID := m.Chat.ID
+
+	chatState := h.state.GetChatState(chatID)
+	if chatState == nil {
+		chatState = &ChatState{}
+	}
+
+	newSetting := !chatState.UseClassicArabicFont
+	chatState.UseClassicArabicFont = newSetting
+
+	h.state.SetChatState(chatID, chatState)
+
+	var status string
+	if newSetting {
+		status = "ON 📜 (Classic Arabic Font)"
+	} else {
+		status = "OFF 📝 (Default Font)"
+	}
+
+	text := fmt.Sprintf("✅ Classic Arabic font is now <b>%s</b> for generated images.", status)
 	h.sendMessage(m.Chat.ID, text)
 }
 
@@ -431,11 +459,13 @@ func (h *Handler) handleInlineQuery(q *tgbotapi.InlineQuery) {
 					ref := fmt.Sprintf("[%s: %d]", services.GetCollectionDisplayName(colName), hadith.HadithNumber)
 
 					useCustomBg := false
+					useClassicArabicFont := true
 					if chatState := h.state.GetChatState(int64(q.From.ID)); chatState != nil {
 						useCustomBg = chatState.UseCustomBg
+						useClassicArabicFont = chatState.UseClassicArabicFont
 					}
 
-					imgBytes, err := h.imageGenerator.GenerateHadithImage(title, hadith.Narrator, hadith.Arabic, hadith.English, ref, useCustomBg)
+					imgBytes, err := h.imageGenerator.GenerateHadithImage(title, hadith.Narrator, hadith.Arabic, hadith.English, ref, useCustomBg, useClassicArabicFont)
 					if err == nil {
 						photoMsg := tgbotapi.NewPhoto(h.imageCacheChannelID, tgbotapi.FileBytes{
 							Name:  "hadith.png",
@@ -872,11 +902,13 @@ func (h *Handler) handleHadithImageCallback(c *tgbotapi.CallbackQuery, parts []s
 	ref := fmt.Sprintf("[%s: %d]", services.GetCollectionDisplayName(col), hadith.HadithNumber)
 
 	useCustomBg := false
+	useClassicArabicFont := true
 	if chatState := h.state.GetChatState(c.From.ID); chatState != nil {
 		useCustomBg = chatState.UseCustomBg
+		useClassicArabicFont = chatState.UseClassicArabicFont
 	}
 
-	imgBytes, err := h.imageGenerator.GenerateHadithImage(title, hadith.Narrator, hadith.Arabic, hadith.English, ref, useCustomBg)
+	imgBytes, err := h.imageGenerator.GenerateHadithImage(title, hadith.Narrator, hadith.Arabic, hadith.English, ref, useCustomBg, useClassicArabicFont)
 	if err != nil {
 		h.log.Error("Failed to generate image: %v", err)
 		h.sendMessage(chatID, "⚠️ Failed to generate image.")
