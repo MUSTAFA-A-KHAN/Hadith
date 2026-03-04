@@ -40,13 +40,17 @@ func NewGenerator(fontDir, bgDir string) *Generator {
 	}
 }
 
-func (g *Generator) GenerateHadithImage(title, narrator, arabicText, englishText, reference string, useCustomBg bool) ([]byte, error) {
+func (g *Generator) GenerateHadithImage(title, narrator, arabicText, englishText, reference string, useCustomBg bool, useClassicArabic bool) ([]byte, error) {
 	const W = 1080
 	// 1. Measure text to determine dynamic height
 	measureDC := gg.NewContext(W, 100)
 
 	arabicFontPath := g.getFontPath("Amiri-Regular.ttf")
+	if useClassicArabic {
+		arabicFontPath = g.getFontPath("ScheherazadeNew-Regular.ttf")
+	}
 	englishFontPath := g.getFontPath("Caveat-Regular.ttf")
+	amiriFontPath := g.getFontPath("Amiri-Regular.ttf") // for mixed-font symbol ﷺ
 
 	// --- Calculations ---
 
@@ -212,7 +216,7 @@ func (g *Generator) GenerateHadithImage(title, narrator, arabicText, englishText
 					w, _ := dc.MeasureString(part)
 					totalW += w
 					if i < len(parts)-1 {
-						dc.LoadFontFace(arabicFontPath, 50)
+						dc.LoadFontFace(amiriFontPath, 50)
 						w, _ = dc.MeasureString("ﷺ")
 						totalW += w
 					}
@@ -227,7 +231,7 @@ func (g *Generator) GenerateHadithImage(title, narrator, arabicText, englishText
 					w, _ := dc.MeasureString(part)
 					curX += w
 					if i < len(parts)-1 {
-						dc.LoadFontFace(arabicFontPath, 50)
+						dc.LoadFontFace(amiriFontPath, 50)
 						dc.DrawStringAnchored("ﷺ", curX, currentAttrY, 0, 0.5)
 						w, _ = dc.MeasureString("ﷺ")
 						curX += w
@@ -276,7 +280,7 @@ func (g *Generator) GenerateHadithImage(title, narrator, arabicText, englishText
 				w, _ := dc.MeasureString(part)
 				totalW += w
 				if i < len(parts)-1 {
-					dc.LoadFontFace(arabicFontPath, 60)
+					dc.LoadFontFace(amiriFontPath, 60)
 					w, _ = dc.MeasureString("ﷺ")
 					totalW += w
 				}
@@ -291,7 +295,7 @@ func (g *Generator) GenerateHadithImage(title, narrator, arabicText, englishText
 				w, _ := dc.MeasureString(part)
 				curX += w
 				if i < len(parts)-1 {
-					dc.LoadFontFace(arabicFontPath, 60)
+					dc.LoadFontFace(amiriFontPath, 60)
 					dc.DrawStringAnchored("ﷺ", curX, lineY, 0, 0.5)
 					w, _ = dc.MeasureString("ﷺ")
 					curX += w
@@ -309,7 +313,7 @@ func (g *Generator) GenerateHadithImage(title, narrator, arabicText, englishText
 	dc.DrawStringAnchored(reference, float64(W)/2, refY, 0.5, 0.5)
 
 	// Draw Bismillah Header (Decorative)
-	dc.LoadFontFace(arabicFontPath, 40)
+	dc.LoadFontFace(amiriFontPath, 40) // usually decorative headers are best with Amiri
 	if titleColor == "#FFFFFF" {
 		dc.SetHexColor("#FFFFFF")
 	} else {

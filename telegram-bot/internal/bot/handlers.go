@@ -75,7 +75,7 @@ func (h *Handler) processSchedules() {
 
 			ref := fmt.Sprintf("[%s: %d]", services.GetCollectionDisplayName(res.Collection.Name), res.Hadith.HadithNumber)
 
-			imgBytes, err := h.imageGenerator.GenerateHadithImage(title, res.Hadith.Narrator, res.Hadith.Arabic, res.Hadith.English, ref, chatState.UseCustomBg)
+			imgBytes, err := h.imageGenerator.GenerateHadithImage(title, res.Hadith.Narrator, res.Hadith.Arabic, res.Hadith.English, ref, chatState.UseCustomBg, chatState.UseClassicArabic)
 			if err != nil {
 				h.log.Error("Failed to generate scheduled image for %d: %v", chatID, err)
 				continue
@@ -132,6 +132,8 @@ func (h *Handler) handleIncomingMessage(m *tgbotapi.Message) {
 			h.handleCollections(m)
 		case "togglebackgrounds":
 			h.handleToggleBackgrounds(m)
+		case "togglearabic":
+			h.handleToggleArabic(m)
 		case "schedule":
 			h.handleSchedule(m)
 		}
@@ -189,6 +191,7 @@ func (h *Handler) handleHelp(m *tgbotapi.Message) {
 • <b>/search &lt;keyword&gt;</b> — Search hadith text
 • <b>/random</b> — Get a random hadith
 • <b>/togglebackgrounds</b> — Toggle custom image backgrounds for generated images
+• <b>/togglearabic</b> — Toggle classic Arabic font for generated images
 • <b>/help</b> — Show this help message
 
 💡 <b>Examples</b>
@@ -275,6 +278,30 @@ func (h *Handler) handleSchedule(m *tgbotapi.Message) {
 	h.state.SetChatState(m.Chat.ID, chatState)
 
 	h.sendMessage(m.Chat.ID, fmt.Sprintf("✅ Schedule updated! A random hadith image will be sent every **%v**.", d))
+}
+
+func (h *Handler) handleToggleArabic(m *tgbotapi.Message) {
+	userID := m.From.ID
+
+	chatState := h.state.GetChatState(userID)
+	if chatState == nil {
+		chatState = &ChatState{}
+	}
+
+	newSetting := !chatState.UseClassicArabic
+	chatState.UseClassicArabic = newSetting
+
+	h.state.SetChatState(userID, chatState)
+
+	var status string
+	if newSetting {
+		status = "Classic Arabic (Scheherazade New)"
+	} else {
+		status = "Default Arabic (Amiri)"
+	}
+
+	text := fmt.Sprintf("✅ Arabic font for generated images is now set to <b>%s</b>.", status)
+	h.sendMessage(m.Chat.ID, text)
 }
 
 func (h *Handler) handleToggleBackgrounds(m *tgbotapi.Message) {
@@ -431,11 +458,13 @@ func (h *Handler) handleInlineQuery(q *tgbotapi.InlineQuery) {
 					ref := fmt.Sprintf("[%s: %d]", services.GetCollectionDisplayName(colName), hadith.HadithNumber)
 
 					useCustomBg := false
+					useClassicArabic := false
 					if chatState := h.state.GetChatState(int64(q.From.ID)); chatState != nil {
 						useCustomBg = chatState.UseCustomBg
+						useClassicArabic = chatState.UseClassicArabic
 					}
 
-					imgBytes, err := h.imageGenerator.GenerateHadithImage(title, hadith.Narrator, hadith.Arabic, hadith.English, ref, useCustomBg)
+					imgBytes, err := h.imageGenerator.GenerateHadithImage(title, hadith.Narrator, hadith.Arabic, hadith.English, ref, useCustomBg, useClassicArabic)
 					if err == nil {
 						photoMsg := tgbotapi.NewPhoto(h.imageCacheChannelID, tgbotapi.FileBytes{
 							Name:  "hadith.png",
@@ -872,11 +901,13 @@ func (h *Handler) handleHadithImageCallback(c *tgbotapi.CallbackQuery, parts []s
 	ref := fmt.Sprintf("[%s: %d]", services.GetCollectionDisplayName(col), hadith.HadithNumber)
 
 	useCustomBg := false
+	useClassicArabic := false
 	if chatState := h.state.GetChatState(c.From.ID); chatState != nil {
 		useCustomBg = chatState.UseCustomBg
+		useClassicArabic = chatState.UseClassicArabic
 	}
 
-	imgBytes, err := h.imageGenerator.GenerateHadithImage(title, hadith.Narrator, hadith.Arabic, hadith.English, ref, useCustomBg)
+	imgBytes, err := h.imageGenerator.GenerateHadithImage(title, hadith.Narrator, hadith.Arabic, hadith.English, ref, useCustomBg, useClassicArabic)
 	if err != nil {
 		h.log.Error("Failed to generate image: %v", err)
 		h.sendMessage(chatID, "⚠️ Failed to generate image.")
