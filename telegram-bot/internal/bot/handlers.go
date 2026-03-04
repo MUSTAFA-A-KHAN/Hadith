@@ -976,6 +976,10 @@ func (h *Handler) formatHadithDisplay(hdt *models.Hadith, col *models.Collection
 }
 
 func (h *Handler) findCollectionForHadith(hadith models.Hadith) string {
+	if hadith.CollectionName != "" {
+		return hadith.CollectionName
+	}
+	// Fallback logic, though with the fix to SearchHadiths this shouldn't be needed
 	for _, col := range h.hadithService.GetCollections() {
 		books := h.hadithService.GetBooks(col.Name)
 		for _, b := range books {
