@@ -27,13 +27,14 @@ type Book struct {
 
 // Hadith represents a single hadith
 type Hadith struct {
-	HadithNumber int    `json:"hadithNumber"`
-	Grade         string `json:"grade"`
-	Arabic        string `json:"arabic"`
-	English       string `json:"english"`
-	Narrator      string `json:"narrator"`
-	ChapterID     int    `json:"chapterId"`
-	BookID        int    `json:"bookId"`
+	HadithNumber   int    `json:"hadithNumber"`
+	Grade          string `json:"grade"`
+	Arabic         string `json:"arabic"`
+	English        string `json:"english"`
+	Narrator       string `json:"narrator"`
+	ChapterID      int    `json:"chapterId"`
+	BookID         int    `json:"bookId"`
+	CollectionName string `json:"collectionName,omitempty"` // Added to track which collection a search result came from
 }
 
 // HadithResponse represents the response from getting hadiths
@@ -160,11 +161,12 @@ func (d *CollectionData) SearchHadiths(query string, page int, limit int) Search
 	query = toLower(query)
 	var results []Hadith
 
-	for _, hadiths := range d.Hadiths {
+	for collectionName, hadiths := range d.Hadiths {
 		for _, h := range hadiths {
 			if contains(toLower(h.English), query) ||
 			   contains(h.Arabic, query) ||
 			   contains(toLower(h.Narrator), query) {
+				h.CollectionName = collectionName // Save the collection name for the search result
 				results = append(results, h)
 			}
 		}
