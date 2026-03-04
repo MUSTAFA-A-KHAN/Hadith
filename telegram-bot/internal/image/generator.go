@@ -50,7 +50,6 @@ func (g *Generator) GenerateHadithImage(title, narrator, arabicText, englishText
 		arabicFontPath = g.getFontPath("ScheherazadeNew-Regular.ttf")
 	}
 	englishFontPath := g.getFontPath("Caveat-Regular.ttf")
-	symbolFontPath := g.getFontPath("Amiri-Regular.ttf")
 
 	// --- Calculations ---
 
@@ -216,7 +215,7 @@ func (g *Generator) GenerateHadithImage(title, narrator, arabicText, englishText
 					w, _ := dc.MeasureString(part)
 					totalW += w
 					if i < len(parts)-1 {
-						dc.LoadFontFace(symbolFontPath, 50)
+						dc.LoadFontFace(arabicFontPath, 50)
 						w, _ = dc.MeasureString("ﷺ")
 						totalW += w
 					}
@@ -231,7 +230,7 @@ func (g *Generator) GenerateHadithImage(title, narrator, arabicText, englishText
 					w, _ := dc.MeasureString(part)
 					curX += w
 					if i < len(parts)-1 {
-						dc.LoadFontFace(symbolFontPath, 50)
+						dc.LoadFontFace(arabicFontPath, 50)
 						dc.DrawStringAnchored("ﷺ", curX, currentAttrY, 0, 0.5)
 						w, _ = dc.MeasureString("ﷺ")
 						curX += w
@@ -280,7 +279,7 @@ func (g *Generator) GenerateHadithImage(title, narrator, arabicText, englishText
 				w, _ := dc.MeasureString(part)
 				totalW += w
 				if i < len(parts)-1 {
-						dc.LoadFontFace(symbolFontPath, 60)
+						dc.LoadFontFace(arabicFontPath, 60)
 					w, _ = dc.MeasureString("ﷺ")
 					totalW += w
 				}
@@ -295,7 +294,7 @@ func (g *Generator) GenerateHadithImage(title, narrator, arabicText, englishText
 				w, _ := dc.MeasureString(part)
 				curX += w
 				if i < len(parts)-1 {
-						dc.LoadFontFace(symbolFontPath, 60)
+						dc.LoadFontFace(arabicFontPath, 60)
 					dc.DrawStringAnchored("ﷺ", curX, lineY, 0, 0.5)
 					w, _ = dc.MeasureString("ﷺ")
 					curX += w
