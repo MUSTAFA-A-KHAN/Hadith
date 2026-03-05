@@ -2,463 +2,209 @@ package image
 
 import (
 	"bytes"
+	"context"
+	"embed"
+	"encoding/base64"
 	"fmt"
-	"image"
-	"math"
+	"html/template"
 	"math/rand"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
-	"github.com/abdullahdiaa/garabic"
-	"github.com/fogleman/gg"
+	"github.com/chromedp/cdproto/emulation"
+	"github.com/chromedp/cdproto/page"
+	"github.com/chromedp/chromedp"
 )
 
+//go:embed template.html
+var templateFS embed.FS
+
 type Generator struct {
-	fontDir string
-	bgDir   string
-	bgImages []image.Image
+	fontDir  string
+	bgDir    string
+	bgImages []string // file paths for custom backgrounds
+	htmlTmpl *template.Template
+
+	// Cached font data
+	englishFontData string
+	amiriFontData   string
+	classicFontData string
 }
 
 func NewGenerator(fontDir, bgDir string) *Generator {
-	var images []image.Image
+	var bgFiles []string
 	if bgDir != "" {
 		jpegFiles, _ := filepath.Glob(filepath.Join(bgDir, "*.jpeg"))
 		jpgFiles, _ := filepath.Glob(filepath.Join(bgDir, "*.jpg"))
-		files := append(jpegFiles, jpgFiles...)
-		for _, file := range files {
-			if im, err := gg.LoadImage(file); err == nil {
-				images = append(images, im)
-			}
-		}
+		bgFiles = append(jpegFiles, jpgFiles...)
 	}
 
-	return &Generator{
+	tmpl, err := template.ParseFS(templateFS, "template.html")
+	if err != nil {
+		panic(fmt.Errorf("failed to load embedded HTML template: %w", err))
+	}
+
+	g := &Generator{
 		fontDir:  fontDir,
 		bgDir:    bgDir,
-		bgImages: images,
+		bgImages: bgFiles,
+		htmlTmpl: tmpl,
 	}
+
+	// Pre-load and cache fonts to avoid reading and base64 encoding from disk on every generation request.
+	if data, err := g.loadFontData("Caveat-Regular.ttf"); err == nil {
+		g.englishFontData = data
+	} else {
+		fmt.Printf("Warning: failed to load english font: %v\n", err)
+	}
+
+	if data, err := g.loadFontData("Amiri-Regular.ttf"); err == nil {
+		g.amiriFontData = data
+	} else {
+		fmt.Printf("Warning: failed to load amiri font: %v\n", err)
+	}
+
+	if data, err := g.loadFontData("ScheherazadeNew-Regular.ttf"); err == nil {
+		g.classicFontData = data
+	} else {
+		fmt.Printf("Warning: failed to load classic arabic font: %v\n", err)
+	}
+
+	return g
+}
+
+func (g *Generator) loadFontData(fontName string) (string, error) {
+	path := filepath.Join(g.fontDir, fontName)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	return "data:font/truetype;charset=utf-8;base64," + base64.StdEncoding.EncodeToString(data), nil
+}
+
+func (g *Generator) getRandomCustomBackgroundData() (string, error) {
+	if len(g.bgImages) == 0 {
+		return "", fmt.Errorf("no background images found")
+	}
+
+	path := g.bgImages[rand.Intn(len(g.bgImages))]
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+
+	// Default to jpeg for simple data URI
+	mimeType := "image/jpeg"
+	if strings.HasSuffix(strings.ToLower(path), ".png") {
+		mimeType = "image/png"
+	}
+
+	return fmt.Sprintf("data:%s;base64,%s", mimeType, base64.StdEncoding.EncodeToString(data)), nil
+}
+
+type templateData struct {
+	Title           string
+	Narrator        template.HTML
+	ArabicText      string
+	EnglishText     template.HTML
+	Reference       string
+	UseCustomBg     bool
+	EnglishFontData template.URL
+	ArabicFontData  template.URL
+	AmiriFontData   template.URL
+	BgImageData     template.URL
+}
+
+func processTextWithSawSymbol(text string) template.HTML {
+	// Escape HTML to prevent injection but keep our span safe
+	escaped := template.HTMLEscapeString(text)
+	escaped = strings.ReplaceAll(escaped, "(saw)", "ﷺ")
+	escaped = strings.ReplaceAll(escaped, "(pbuh)", "ﷺ")
+	escaped = strings.ReplaceAll(escaped, "ﷺ", `<span class="saw-symbol">ﷺ</span>`)
+	return template.HTML(escaped)
 }
 
 func (g *Generator) GenerateHadithImage(title, narrator, arabicText, englishText, reference string, useCustomBg bool, useClassicArabic bool) ([]byte, error) {
-	const W = 1080
-	// 1. Measure text to determine dynamic height
-	measureDC := gg.NewContext(W, 100)
-
-	arabicFontPath := g.getFontPath("Amiri-Regular.ttf")
-	if useClassicArabic {
-		arabicFontPath = g.getFontPath("ScheherazadeNew-Regular.ttf")
-	}
-	englishFontPath := g.getFontPath("Caveat-Regular.ttf")
-	amiriFontPath := g.getFontPath("Amiri-Regular.ttf") // for mixed-font symbol ﷺ
-
-	// --- Calculations ---
-
-	// Common max width
-	maxWidth := float64(W) - 160
-
-	// Title Height
-	if err := measureDC.LoadFontFace(englishFontPath, 110); err != nil {
-		return nil, fmt.Errorf("failed to load title font: %w", err)
-	}
-	titleLines := measureDC.WordWrap(strings.ToUpper(title), maxWidth)
-	titleLineHeight := measureDC.FontHeight() * 1.1
-	titleHeight := float64(len(titleLines)) * titleLineHeight
-
-	// Attribution Height
-	displayText := narrator
-	if displayText == "" {
-		displayText = "The Prophet Muhammad ﷺ said:"
-	} else {
-		if !strings.HasSuffix(displayText, ":") && !strings.HasSuffix(displayText, ".") {
-			displayText += ":"
-		}
-	}
-	displayText = strings.ReplaceAll(displayText, "(saw)", "ﷺ")
-	displayText = strings.ReplaceAll(displayText, "(pbuh)", "ﷺ")
-
-	if err := measureDC.LoadFontFace(englishFontPath, 50); err != nil {
-		return nil, fmt.Errorf("failed to load attribution font: %w", err)
-	}
-
-	attributionLines := measureDC.WordWrap(displayText, maxWidth)
-	attributionHeight := float64(len(attributionLines)) * measureDC.FontHeight() * 1.2
-
-	// Arabic Height
-	if err := measureDC.LoadFontFace(arabicFontPath, 70); err != nil {
-		return nil, fmt.Errorf("failed to load arabic font: %w", err)
-	}
-
-	// Sanitize Arabic text
-	safeArabicText := strings.TrimSpace(arabicText)
-	if safeArabicText == "" {
-		safeArabicText = " "
-	}
-
-	// Wrap Logical Text first to preserve sentence order (Top-to-Bottom)
-	logicalArabicLines := measureDC.WordWrap(safeArabicText, maxWidth)
-
-	// Shape each line (Logical -> Visual)
-	var shapedArabicLines []string
-	for _, line := range logicalArabicLines {
-		var shaped string
-		func() {
-			defer func() {
-				if r := recover(); r != nil {
-					shaped = line // Fallback to logical text (better than crash)
-				}
-			}()
-			// Reverse the order of words before shaping because gg draws left-to-right.
-			// This ensures the first word in the string appears on the far right.
-			words := strings.Fields(line)
-			for i, j := 0, len(words)-1; i < j; i, j = i+1, j-1 {
-				words[i], words[j] = words[j], words[i]
-			}
-			reversedLine := strings.Join(words, " ")
-
-			// garabic.Shape returns Visual Order (Right-to-Left characters reversed for LTR display)
-			shaped = garabic.Shape(reversedLine)
-		}()
-		shapedArabicLines = append(shapedArabicLines, shaped)
-	}
-
-	arabicLineHeight := measureDC.FontHeight() * 1.5
-	arabicTotalHeight := float64(len(shapedArabicLines)) * arabicLineHeight
-
-	// English Height
-	if err := measureDC.LoadFontFace(englishFontPath, 60); err != nil {
-		return nil, fmt.Errorf("failed to load english font: %w", err)
-	}
-	englishLines := measureDC.WordWrap(englishText, maxWidth)
-	englishLineHeight := measureDC.FontHeight() * 1.2
-	englishTotalHeight := float64(len(englishLines)) * englishLineHeight
-
-	// Reference Height
-	if err := measureDC.LoadFontFace(englishFontPath, 40); err != nil {
-		return nil, fmt.Errorf("failed to load ref font: %w", err)
-	}
-	refHeight := measureDC.FontHeight()
-
-	// Padding & Spacing
-	gap1 := 80.0 // Title to attribution
-	gap2 := 100.0 // Attribution to Arabic
-	gap3 := 80.0 // Arabic to English
-	gap4 := 100.0 // English to Reference
-	paddingBottom := 100.0
-
-	// Flow calculation
-	currentY := 100.0 // Top margin
-
-	titleY := currentY + titleHeight/2
-	currentY += titleHeight + gap1
-
-	attributionY := currentY + attributionHeight/2
-	currentY += attributionHeight + gap2
-
-	arabicStartY := currentY + arabicTotalHeight/2
-	currentY += arabicTotalHeight + gap3
-
-	englishStartY := currentY + englishTotalHeight/2
-	currentY += englishTotalHeight + gap4
-
-	refY := currentY + refHeight/2
-	currentY += refHeight + paddingBottom
-
-	totalH := int(math.Max(1080, currentY))
-
-	// --- 2. Drawing ---
-	dc := gg.NewContext(W, totalH)
-
-	textColorMain := "#1a1a1a"
-	textColorRef := "#4a4a4a"
-	titleColor := "#558B2F"
-
+	// 1. Prepare Template Data
+	var err error
+	var bgData string
 	if useCustomBg && g.bgDir != "" {
-		im, err := g.getRandomCustomBackground()
-		if err == nil {
-			g.drawCustomBackground(dc, im, W, totalH)
-			// For custom backgrounds, we overlay a dimming layer
-			dc.SetRGBA(0, 0, 0, 0.6)
-			dc.DrawRectangle(0, 0, float64(W), float64(totalH))
-			dc.Fill()
-
-			// Use white/light colors for text to be readable on dark overlay
-			textColorMain = "#FFFFFF"
-			textColorRef = "#DDDDDD"
-			titleColor = "#FFFFFF"
-		} else {
-			g.drawBackground(dc)
-		}
-	} else {
-		g.drawBackground(dc)
-	}
-
-	// Draw Title
-	dc.SetHexColor(titleColor)
-	dc.LoadFontFace(englishFontPath, 110)
-	currentTitleY := titleY - (titleHeight / 2) + (titleLineHeight / 2)
-	for _, line := range titleLines {
-		dc.DrawStringAnchored(line, float64(W)/2, currentTitleY, 0.5, 0.5)
-		currentTitleY += titleLineHeight
-	}
-
-	// Draw Attribution
-	dc.SetHexColor(textColorMain)
-	if strings.Contains(displayText, "ﷺ") {
-		// Centered single line approach for mixed font (simplified)
-		// We use the first line of attributionLines if wrapping happened, but mixed font wrapping is complex.
-		// Fallback: Just draw the first line or try to draw full string centered if short.
-		// Given constraints, we'll iterate wrapped lines but only support symbol in them if they fit logic.
-		// Simplification: Iterate attributionLines (which are English font wrapped).
-		// If a line has the placeholder, we split and draw.
-
-		currentAttrY := attributionY - (attributionHeight/2) + (measureDC.FontHeight()*1.2/2)
-		for _, line := range attributionLines {
-			if strings.Contains(line, "ﷺ") {
-				parts := strings.Split(line, "ﷺ")
-				totalW := 0.0
-
-				// Measure total width first
-				for i, part := range parts {
-					dc.LoadFontFace(englishFontPath, 50)
-					w, _ := dc.MeasureString(part)
-					totalW += w
-					if i < len(parts)-1 {
-						dc.LoadFontFace(amiriFontPath, 50)
-						w, _ = dc.MeasureString("ﷺ")
-						totalW += w
-					}
-				}
-
-				startX := (float64(W) - totalW) / 2
-				curX := startX
-
-				for i, part := range parts {
-					dc.LoadFontFace(englishFontPath, 50)
-					dc.DrawStringAnchored(part, curX, currentAttrY, 0, 0.5)
-					w, _ := dc.MeasureString(part)
-					curX += w
-					if i < len(parts)-1 {
-						dc.LoadFontFace(amiriFontPath, 50)
-						dc.DrawStringAnchored("ﷺ", curX, currentAttrY, 0, 0.5)
-						w, _ = dc.MeasureString("ﷺ")
-						curX += w
-					}
-				}
-			} else {
-				dc.LoadFontFace(englishFontPath, 50)
-				dc.DrawStringAnchored(line, float64(W)/2, currentAttrY, 0.5, 0.5)
-			}
-			currentAttrY += measureDC.FontHeight() * 1.2
-		}
-	} else {
-		dc.LoadFontFace(englishFontPath, 50)
-		for i, line := range attributionLines {
-			offsetY := float64(i)*measureDC.FontHeight()*1.2 - (attributionHeight/2) + (measureDC.FontHeight()*1.2/2)
-			dc.DrawStringAnchored(line, float64(W)/2, attributionY+offsetY, 0.5, 0.5)
+		bgData, err = g.getRandomCustomBackgroundData()
+		if err != nil {
+			useCustomBg = false // Fallback
 		}
 	}
 
-	// Draw Arabic
-	dc.SetHexColor(textColorMain)
-	dc.LoadFontFace(arabicFontPath, 70)
-	for i, line := range shapedArabicLines {
-		// line is already shaped and in Visual Order.
-		// gg draws LTR. Visual Order is designed for LTR.
-		// So we just draw it.
-
-		offsetY := float64(i)*arabicLineHeight - (arabicTotalHeight/2) + (arabicLineHeight/2)
-		dc.DrawStringAnchored(line, float64(W)/2, arabicStartY+offsetY, 0.5, 0.5)
+	arabicFontData := g.amiriFontData
+	if useClassicArabic {
+		arabicFontData = g.classicFontData
 	}
 
-	// Draw English
-	dc.SetHexColor(textColorMain)
-	dc.LoadFontFace(englishFontPath, 60)
-	for i, line := range englishLines {
-		offsetY := float64(i)*englishLineHeight - (englishTotalHeight/2) + (englishLineHeight/2)
-		lineY := englishStartY + offsetY
-
-		if strings.Contains(line, "ﷺ") {
-			parts := strings.Split(line, "ﷺ")
-			totalW := 0.0
-
-			// Measure total width first
-			for i, part := range parts {
-				dc.LoadFontFace(englishFontPath, 60)
-				w, _ := dc.MeasureString(part)
-				totalW += w
-				if i < len(parts)-1 {
-					dc.LoadFontFace(amiriFontPath, 60)
-					w, _ = dc.MeasureString("ﷺ")
-					totalW += w
-				}
-			}
-
-			startX := (float64(W) - totalW) / 2
-			curX := startX
-
-			for i, part := range parts {
-				dc.LoadFontFace(englishFontPath, 60)
-				dc.DrawStringAnchored(part, curX, lineY, 0, 0.5)
-				w, _ := dc.MeasureString(part)
-				curX += w
-				if i < len(parts)-1 {
-					dc.LoadFontFace(amiriFontPath, 60)
-					dc.DrawStringAnchored("ﷺ", curX, lineY, 0, 0.5)
-					w, _ = dc.MeasureString("ﷺ")
-					curX += w
-				}
-			}
-		} else {
-			dc.LoadFontFace(englishFontPath, 60)
-			dc.DrawStringAnchored(line, float64(W)/2, lineY, 0.5, 0.5)
-		}
+	// Prepare attribution
+	if narrator == "" {
+		narrator = "The Prophet Muhammad ﷺ said:"
+	} else if !strings.HasSuffix(narrator, ":") && !strings.HasSuffix(narrator, ".") {
+		narrator += ":"
 	}
 
-	// Draw Reference
-	dc.SetHexColor(textColorRef)
-	dc.LoadFontFace(englishFontPath, 40)
-	dc.DrawStringAnchored(reference, float64(W)/2, refY, 0.5, 0.5)
-
-	// Draw Bismillah Header (Decorative)
-	dc.LoadFontFace(amiriFontPath, 40) // usually decorative headers are best with Amiri
-	if titleColor == "#FFFFFF" {
-		dc.SetHexColor("#FFFFFF")
-	} else {
-		dc.SetHexColor("#556B2F") // Olive
+	data := templateData{
+		Title:           strings.ToUpper(title),
+		Narrator:        processTextWithSawSymbol(narrator),
+		ArabicText:      arabicText, // pure HTML handles RTL natively, no garabic shaping needed!
+		EnglishText:     processTextWithSawSymbol(englishText),
+		Reference:       reference,
+		UseCustomBg:     useCustomBg,
+		EnglishFontData: template.URL(g.englishFontData),
+		ArabicFontData:  template.URL(arabicFontData),
+		AmiriFontData:   template.URL(g.amiriFontData),
+		BgImageData:     template.URL(bgData),
 	}
-	dc.DrawStringAnchored(garabic.Shape("بسم الله الرحمن الرحيم"), float64(W)/2, 65, 0.5, 0.5)
 
+	// 2. Render HTML
 	var buf bytes.Buffer
-	if err := dc.EncodePNG(&buf); err != nil {
-		return nil, fmt.Errorf("failed to encode png: %w", err)
+	if err := g.htmlTmpl.Execute(&buf, data); err != nil {
+		return nil, fmt.Errorf("failed to execute html template: %w", err)
 	}
 
-	return buf.Bytes(), nil
-}
+	htmlContent := buf.String()
 
-func (g *Generator) drawBackground(dc *gg.Context) {
-	width := float64(dc.Width())
-	height := float64(dc.Height())
+	// 3. Render HTML to Image via ChromeDP
+	ctx, cancel := chromedp.NewContext(context.Background())
+	defer cancel()
 
-	// 1. Soft Warm Beige Background
-	dc.SetHexColor("#FDFCF5") // Very light cream/warm paper
-	dc.Clear()
+	// Add timeout
+	ctx, cancel = context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
 
-	// 2. Subtle Texture (Noise/Speckles)
-	rnd := rand.New(rand.NewSource(time.Now().UnixNano()))
-	for i := 0; i < 5000; i++ {
-		x := rnd.Float64() * width
-		y := rnd.Float64() * height
-		r := 0.5 + rnd.Float64()*1.5
-		alpha := 10 + rnd.Intn(20)
-		dc.SetRGBA255(210, 205, 190, alpha) // darker beige speckles
-		dc.DrawCircle(x, y, r)
-		dc.Fill()
+	var imageBuf []byte
+
+	// The width is fixed at 1080px. We need Chrome to capture the full scrolling height.
+	err = chromedp.Run(ctx,
+		// Load HTML directly
+		chromedp.Navigate("about:blank"),
+		chromedp.ActionFunc(func(ctx context.Context) error {
+			frameTree, err := page.GetFrameTree().Do(ctx)
+			if err != nil {
+				return err
+			}
+			return page.SetDocumentContent(frameTree.Frame.ID, htmlContent).Do(ctx)
+		}),
+
+		// Set a base viewport to trigger responsive rendering, but height will dynamically grow
+		emulation.SetDeviceMetricsOverride(1080, 1080, 1, false),
+
+		// Wait robustly for fonts to load and rendering to settle
+		chromedp.EvaluateAsDevTools(`new Promise(resolve => document.fonts.ready.then(resolve))`, nil),
+
+		// Capture full page screenshot
+		chromedp.FullScreenshot(&imageBuf, 100),
+	)
+
+	if err != nil {
+		return nil, fmt.Errorf("chromedp failed to render image: %w", err)
 	}
 
-	// 3. Islamic Geometric Pattern (Simplified Star/Rosette Motif) - Faint overlay
-	dc.SetRGBA255(180, 190, 160, 15) // Sage green tint, very transparent
-	patternSize := 150.0
-	for x := 0.0; x < width; x += patternSize {
-		for y := 0.0; y < height; y += patternSize {
-			drawStarMotif(dc, x+patternSize/2, y+patternSize/2, patternSize*0.4)
-		}
-	}
-
-	// 4. Elegant Border
-	margin := 30.0
-	dc.SetLineWidth(3)
-	dc.SetHexColor("#8FBC8F") // Dark Sea Green
-	dc.DrawRectangle(margin, margin, width-2*margin, height-2*margin)
-	dc.Stroke()
-
-	// Inner thin gold border
-	margin2 := 38.0
-	dc.SetLineWidth(1)
-	dc.SetHexColor("#D4AF37") // Gold
-	dc.DrawRectangle(margin2, margin2, width-2*margin2, height-2*margin2)
-	dc.Stroke()
-
-	// Corner Accents (Floral/Geometric)
-	drawCorner(dc, margin, margin, 1)            // Top-Left
-	drawCorner(dc, width-margin, margin, 2)      // Top-Right
-	drawCorner(dc, width-margin, height-margin, 3) // Bottom-Right
-	drawCorner(dc, margin, height-margin, 4)     // Bottom-Left
-}
-
-func drawStarMotif(dc *gg.Context, cx, cy, r float64) {
-	dc.Push()
-	dc.Translate(cx, cy)
-	for i := 0; i < 8; i++ {
-		dc.Rotate(gg.Radians(45))
-		dc.DrawEllipse(0, r/2, r/6, r/2)
-	}
-	dc.Fill()
-	dc.Pop()
-}
-
-func drawCorner(dc *gg.Context, x, y float64, corner int) {
-	size := 80.0
-	dc.Push()
-	dc.Translate(x, y)
-
-	// Rotate based on corner to face inward
-	switch corner {
-	case 1: // TL
-		// No rotation
-	case 2: // TR
-		dc.Rotate(gg.Radians(90))
-	case 3: // BR
-		dc.Rotate(gg.Radians(180))
-	case 4: // BL
-		dc.Rotate(gg.Radians(270))
-	}
-
-	// Draw decorative vine/leaf
-	dc.SetHexColor("#556B2F") // Dark Olive Green
-	dc.MoveTo(0, 0)
-	dc.QuadraticTo(size/2, 0, size, size)
-	dc.Stroke()
-
-	// Leaf
-	dc.SetRGBA255(107, 142, 35, 100) // Olive Drab
-	dc.DrawCircle(size/3, size/3, 5)
-	dc.Fill()
-	dc.DrawCircle(size/1.5, size/1.5, 3)
-	dc.Fill()
-
-	dc.Pop()
-}
-
-func (g *Generator) getFontPath(fontName string) string {
-	return filepath.Join(g.fontDir, fontName)
-}
-
-func (g *Generator) getRandomCustomBackground() (image.Image, error) {
-	if len(g.bgImages) == 0 {
-		return nil, fmt.Errorf("no background images found")
-	}
-
-	return g.bgImages[rand.Intn(len(g.bgImages))], nil
-}
-
-func (g *Generator) drawCustomBackground(dc *gg.Context, im image.Image, W, H int) {
-	iw := im.Bounds().Dx()
-	ih := im.Bounds().Dy()
-
-	// Scale and center crop to fill the canvas
-	scale := math.Max(float64(W)/float64(iw), float64(H)/float64(ih))
-
-	newW := float64(iw) * scale
-	newH := float64(ih) * scale
-
-	x := (float64(W) - newW) / 2
-	y := (float64(H) - newH) / 2
-
-	dc.Push()
-	dc.Translate(x, y)
-	dc.Scale(scale, scale)
-	dc.DrawImage(im, 0, 0)
-	dc.Pop()
+	return imageBuf, nil
 }
