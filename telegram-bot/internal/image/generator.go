@@ -108,8 +108,16 @@ func (g *Generator) GenerateHadithImage(title, narrator, arabicText, englishText
 					shaped = line // Fallback to logical text (better than crash)
 				}
 			}()
+			// Reverse the order of words before shaping because gg draws left-to-right.
+			// This ensures the first word in the string appears on the far right.
+			words := strings.Fields(line)
+			for i, j := 0, len(words)-1; i < j; i, j = i+1, j-1 {
+				words[i], words[j] = words[j], words[i]
+			}
+			reversedLine := strings.Join(words, " ")
+
 			// garabic.Shape returns Visual Order (Right-to-Left characters reversed for LTR display)
-			shaped = garabic.Shape(line)
+			shaped = garabic.Shape(reversedLine)
 		}()
 		shapedArabicLines = append(shapedArabicLines, shaped)
 	}
