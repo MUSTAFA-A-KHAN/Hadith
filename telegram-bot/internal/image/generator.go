@@ -95,6 +95,9 @@ func (g *Generator) GenerateHadithImage(title, narrator, arabicText, englishText
 		safeArabicText = " "
 	}
 
+	// Replace Arabic Tatweel (Kashida) with a regular hyphen to prevent garabic panic
+	safeArabicText = strings.ReplaceAll(safeArabicText, "ـ", "-")
+
 	// Wrap Logical Text first to preserve sentence order (Top-to-Bottom)
 	logicalArabicLines := measureDC.WordWrap(safeArabicText, maxWidth)
 
