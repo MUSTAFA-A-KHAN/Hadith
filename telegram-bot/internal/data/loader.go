@@ -70,6 +70,15 @@ func LoadHadithData(dataDir string) (*models.CollectionData, error) {
 			Description: "Collection of hadith on jurisprudence",
 			Grade:       "Sahih",
 		},
+		{
+			Name:        "riyadussaliheen",
+			Title:       "Riyad as-Salihin",
+			Author:      "Imam an-Nawawi",
+			Hadiths:     0,
+			Books:       0,
+			Description: "The Meadows of the Righteous",
+			Grade:       "Hasan",
+		},
 	}
 
 	data.Collections = collections
@@ -82,6 +91,7 @@ func LoadHadithData(dataDir string) (*models.CollectionData, error) {
 		"tirmidhi.json",
 		"nasai.json",
 		"ibnmajah.json",
+		"riyadussaliheen.json",
 	}
 
 	for _, file := range collectionFiles {
@@ -267,6 +277,15 @@ func GetDefaultCollectionData() *models.CollectionData {
 				Books:       37,
 				Description: "Collection of hadith on jurisprudence",
 				Grade:       "Sahih",
+			},
+			{
+				Name:        "riyadussaliheen",
+				Title:       "Riyad as-Salihin",
+				Author:      "Imam an-Nawawi",
+				Hadiths:     1896,
+				Books:       20,
+				Description: "The Meadows of the Righteous",
+				Grade:       "Hasan",
 			},
 		},
 		Books:   make(map[string][]models.Book),
