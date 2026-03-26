@@ -110,12 +110,81 @@ func (h *Handler) StartListening() {
 	for update := range updates {
 		if update.Message != nil {
 			h.handleIncomingMessage(update.Message)
+		} else if update.ChannelPost != nil {
+			h.handleChannelPost(update.ChannelPost)
 		} else if update.CallbackQuery != nil {
 			h.handleCallback(update.CallbackQuery)
 		} else if update.InlineQuery != nil {
 			h.handleInlineQuery(update.InlineQuery)
 		}
 	}
+}
+
+func (h *Handler) handleChannelPost(m *tgbotapi.Message) {
+	if m.IsCommand() {
+		switch m.Command() {
+		case "schedule":
+			h.handleChannelSchedule(m)
+		case "togglearabic":
+			h.handleChannelToggleArabic(m)
+		case "togglebackgrounds":
+			h.handleChannelToggleBackgrounds(m)
+		}
+	}
+}
+
+func (h *Handler) handleChannelSchedule(m *tgbotapi.Message) {
+	args := strings.TrimSpace(m.CommandArguments())
+	chatState := h.state.GetChatState(m.Chat.ID)
+	if chatState == nil {
+		chatState = &ChatState{
+			LastSentAt: time.Now(),
+		}
+	}
+
+	deleteCommand := true
+
+	if args != "" {
+		if strings.ToLower(args) == "off" {
+			chatState.ScheduleInterval = 0
+			h.state.SetChatState(m.Chat.ID, chatState)
+		} else {
+			d, err := time.ParseDuration(args)
+			if err == nil && d > 0 {
+				chatState.ScheduleInterval = d
+				chatState.LastSentAt = time.Now()
+				h.state.SetChatState(m.Chat.ID, chatState)
+			}
+		}
+	}
+
+	if deleteCommand {
+		h.bot.Request(tgbotapi.NewDeleteMessage(m.Chat.ID, m.MessageID))
+	}
+}
+
+func (h *Handler) handleChannelToggleArabic(m *tgbotapi.Message) {
+	chatState := h.state.GetChatState(m.Chat.ID)
+	if chatState == nil {
+		chatState = &ChatState{}
+	}
+
+	chatState.UseClassicArabic = !chatState.UseClassicArabic
+	h.state.SetChatState(m.Chat.ID, chatState)
+
+	h.bot.Request(tgbotapi.NewDeleteMessage(m.Chat.ID, m.MessageID))
+}
+
+func (h *Handler) handleChannelToggleBackgrounds(m *tgbotapi.Message) {
+	chatState := h.state.GetChatState(m.Chat.ID)
+	if chatState == nil {
+		chatState = &ChatState{}
+	}
+
+	chatState.UseCustomBg = !chatState.UseCustomBg
+	h.state.SetChatState(m.Chat.ID, chatState)
+
+	h.bot.Request(tgbotapi.NewDeleteMessage(m.Chat.ID, m.MessageID))
 }
 
 func (h *Handler) handleIncomingMessage(m *tgbotapi.Message) {
